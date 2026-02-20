@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ModelsLab/cli/internal/output"
+	"github.com/ModelsLab/modelslab-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 

@@ -3,7 +3,7 @@ package cmd
 import (
 	"fmt"
 
-	mcpserver "github.com/ModelsLab/cli/internal/mcp"
+	mcpserver "github.com/ModelsLab/modelslab-cli/internal/mcp"
 	"github.com/spf13/cobra"
 )
 

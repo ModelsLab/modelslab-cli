@@ -3,8 +3,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/ModelsLab/cli/internal/api"
-	"github.com/ModelsLab/cli/internal/output"
+	"github.com/ModelsLab/modelslab-cli/internal/api"
+	"github.com/ModelsLab/modelslab-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 

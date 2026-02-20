@@ -5,9 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/ModelsLab/cli/internal/auth"
-	"github.com/ModelsLab/cli/internal/config"
-	"github.com/ModelsLab/cli/internal/output"
+	"github.com/ModelsLab/modelslab-cli/internal/auth"
+	"github.com/ModelsLab/modelslab-cli/internal/config"
+	"github.com/ModelsLab/modelslab-cli/internal/output"
 	"github.com/spf13/cobra"
 )
 

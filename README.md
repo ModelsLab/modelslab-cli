@@ -23,25 +23,25 @@ scoop install modelslab
 
 ```bash
 # Download the latest .deb from GitHub Releases
-curl -fsSL https://github.com/ModelsLab/cli/releases/latest/download/modelslab_linux_amd64.deb -o modelslab.deb
+curl -fsSL https://github.com/ModelsLab/modelslab-cli/releases/latest/download/modelslab_linux_amd64.deb -o modelslab.deb
 sudo dpkg -i modelslab.deb
 ```
 
 ### Direct Download (any platform)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ModelsLab/cli/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/ModelsLab/modelslab-cli/main/install.sh | sh
 ```
 
 ### Go Install
 
 ```bash
-go install github.com/ModelsLab/cli/cmd/modelslab@latest
+go install github.com/ModelsLab/modelslab-cli/cmd/modelslab@latest
 ```
 
 ### Manual Download
 
-Download the latest binary for your platform from [GitHub Releases](https://github.com/ModelsLab/cli/releases).
+Download the latest binary for your platform from [GitHub Releases](https://github.com/ModelsLab/modelslab-cli/releases).
 
 | Platform | Architecture | Download |
 |----------|-------------|----------|

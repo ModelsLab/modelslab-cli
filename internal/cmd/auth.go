@@ -6,9 +6,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/ModelsLab/cli/internal/api"
-	"github.com/ModelsLab/cli/internal/auth"
-	"github.com/ModelsLab/cli/internal/output"
+	"github.com/ModelsLab/modelslab-cli/internal/api"
+	"github.com/ModelsLab/modelslab-cli/internal/auth"
+	"github.com/ModelsLab/modelslab-cli/internal/output"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )

@@ -49,6 +49,14 @@ changelog:
       - "^ci:"
       - "Merge pull request"
 
+homebrew_casks:
+  - repository:
+      owner: ModelsLab
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: https://modelslab.com/cli
+    description: "ModelsLab CLI — AI generation and account management from the terminal"
+
 scoops:
   - repository:
       owner: ModelsLab

@@ -3,7 +3,7 @@
 # Usage: curl -fsSL https://modelslab.com/cli/install.sh | sh
 set -e
 
-REPO="ModelsLab/cli"
+REPO="ModelsLab/modelslab-cli"
 BINARY="modelslab"
 
 # Detect OS and architecture

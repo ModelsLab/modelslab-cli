@@ -1,4 +1,4 @@
-module github.com/ModelsLab/cli
+module github.com/ModelsLab/modelslab-cli
 
 go 1.25.0
 

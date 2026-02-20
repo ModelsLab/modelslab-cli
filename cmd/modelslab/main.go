@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ModelsLab/cli/internal/cmd"
+	"github.com/ModelsLab/modelslab-cli/internal/cmd"
 )
 
 // Set by goreleaser ldflags
