@@ -30,7 +30,7 @@ sudo dpkg -i modelslab.deb
 ### Direct Download (any platform)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ModelsLab/modelslab-cli/main/install.sh | sh
+curl -fsSL https://modelslab.sh/install.sh | sh
 ```
 
 ### Go Install
