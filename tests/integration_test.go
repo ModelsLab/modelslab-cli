@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -17,10 +18,19 @@ import (
 // Set MODELSLAB_TEST_URL to override.
 var baseURL = "http://127.0.0.1:8888"
 
-func init() {
+func TestMain(m *testing.M) {
 	if url := os.Getenv("MODELSLAB_TEST_URL"); url != "" {
 		baseURL = url
 	}
+	// Build the binary before running tests
+	root := getProjectRoot()
+	build := exec.Command("go", "build", "-o", filepath.Join(root, "modelslab"), "./cmd/modelslab/")
+	build.Dir = root
+	if out, err := build.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to build binary: %s\n%s\n", err, out)
+		os.Exit(1)
+	}
+	os.Exit(m.Run())
 }
 
 func runCLI(args ...string) (string, string, int) {
@@ -51,7 +61,19 @@ func runCLIJSON(args ...string) (map[string]interface{}, string, int) {
 }
 
 func getProjectRoot() string {
-	return "/Users/admin/Documents/GitHub/modelslab-cli"
+	// Walk up from the test directory to find go.mod
+	dir, _ := os.Getwd()
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return "."
 }
 
 // --- Tests ---
