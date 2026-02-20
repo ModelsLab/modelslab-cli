@@ -54,7 +54,7 @@ homebrew_casks:
       owner: ModelsLab
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    homepage: https://modelslab.com/cli
+    homepage: https://modelslab.sh
     description: "ModelsLab CLI — AI generation and account management from the terminal"
 
 scoops:
@@ -62,7 +62,7 @@ scoops:
       owner: ModelsLab
       name: scoop-bucket
       token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
-    homepage: https://modelslab.com/cli
+    homepage: https://modelslab.sh
     description: "ModelsLab CLI — AI generation and account management from the terminal"
     license: MIT
 
@@ -70,7 +70,7 @@ nfpms:
   - formats:
       - deb
       - rpm
-    homepage: https://modelslab.com/cli
+    homepage: https://modelslab.sh
     description: "ModelsLab CLI — AI generation and account management from the terminal"
     maintainer: "ModelsLab <support@modelslab.com>"
     license: MIT

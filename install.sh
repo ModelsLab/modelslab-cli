@@ -1,6 +1,6 @@
 #!/bin/sh
 # ModelsLab CLI installer
-# Usage: curl -fsSL https://modelslab.com/cli/install.sh | sh
+# Usage: curl -fsSL https://modelslab.sh/install.sh | sh
 set -e
 
 REPO="ModelsLab/modelslab-cli"
