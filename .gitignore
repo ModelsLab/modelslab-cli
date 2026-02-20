@@ -1,6 +1,6 @@
 # Binaries
-modelslab
-modelslab.exe
+/modelslab
+/modelslab.exe
 *.exe
 *.dll
 *.so
