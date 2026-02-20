@@ -2,7 +2,7 @@
 
 ## What is this project?
 
-A Go CLI for the [ModelsLab](https://modelslab.com) platform. It covers account management, model discovery, AI generation (image/video/audio/3D/chat), billing, wallet, subscriptions, teams, usage analytics, and MCP server mode. ~10k lines of Go across 26 files, 103 subcommands in 14 groups.
+A Go CLI for the [ModelsLab](https://modelslab.com) platform. It covers account management, model discovery, AI generation (image/video/audio/3D/chat), billing, wallet, subscriptions, teams, usage analytics, and MCP server mode. ~10k lines of Go across 26 files, 105 subcommands in 14 groups.
 
 ## Quick Reference
 
@@ -40,9 +40,9 @@ internal/
     keys.go                    # 5 API key commands
     models.go                  # 8 model discovery commands
     generate.go                # 20 generation commands + polling + download
-    billing.go                 # 10 billing commands + Stripe tokenization
+    billing.go                 # 13 billing commands + Stripe tokenization + payment links + setup intents
     wallet.go                  # 10 wallet commands
-    subscriptions.go           # 11 subscription commands
+    subscriptions.go           # 10 subscription commands
     teams.go                   # 7 team commands
     usage.go                   # 3 usage analytics commands
     config.go                  # 6 config/profile commands
@@ -110,7 +110,7 @@ CLI flags → env vars (`MODELSLAB_*`) → project config → user config (`~/.c
 
 ### MCP Server
 
-`internal/mcp/server.go` registers ~30 tools covering both control plane and generation endpoints. Supports `stdio` (default) and `sse` transports. Used by Claude Desktop/Code:
+`internal/mcp/server.go` registers ~37 tools covering both control plane and generation endpoints. Supports `stdio` (default) and `sse` transports. Used by Claude Desktop/Code:
 ```json
 { "mcpServers": { "modelslab": { "command": "modelslab", "args": ["mcp", "serve"] } } }
 ```
@@ -172,4 +172,4 @@ Check `internal/cmd/helpers.go` for the shared response parsing helpers. If the 
 
 ## Design Document
 
-The full design spec is in `cli.md` (1075 lines). It contains the complete API endpoint mapping, all 103 commands, UX flows, and architectural decisions. Consult it for the authoritative specification.
+The full design spec is in `cli.md`. It contains the complete API endpoint mapping, all 102 commands, UX flows, and architectural decisions. Consult it for the authoritative specification.

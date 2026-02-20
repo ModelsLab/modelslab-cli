@@ -86,7 +86,7 @@ modelslab models        Discover models (search, detail, filters, tags, provider
 modelslab generate      Generate AI content (image, video, audio, 3D, chat)
 modelslab billing       Manage billing (overview, payment methods, invoices)
 modelslab wallet        Manage wallet (balance, fund, transactions, coupons)
-modelslab subscriptions Manage subscriptions (plans, create, cancel, pause)
+modelslab subscriptions Manage subscriptions (plans, create, pause, resume)
 modelslab teams         Manage teams (list, invite, update, remove)
 modelslab usage         View usage analytics (summary, products, history)
 modelslab config        Manage CLI configuration (set, get, profiles)

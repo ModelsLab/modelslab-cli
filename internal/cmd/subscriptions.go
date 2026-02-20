@@ -273,7 +273,6 @@ func makeSubsActionCmd(action, short, httpMethod string) *cobra.Command {
 	}
 }
 
-var subsCancelCmd = makeSubsActionCmd("cancel", "Cancel subscription", "POST")
 var subsPauseCmd = makeSubsActionCmd("pause", "Pause subscription", "POST")
 var subsResumeCmd = makeSubsActionCmd("resume", "Resume subscription", "POST")
 var subsResetCycleCmd = makeSubsActionCmd("reset-cycle", "Reset billing cycle", "POST")
@@ -326,7 +325,7 @@ func init() {
 	subsUpdateCmd.MarkFlagRequired("id")
 	subsUpdateCmd.MarkFlagRequired("new-plan-id")
 
-	for _, c := range []*cobra.Command{subsCancelCmd, subsPauseCmd, subsResumeCmd, subsResetCycleCmd} {
+	for _, c := range []*cobra.Command{subsPauseCmd, subsResumeCmd, subsResetCycleCmd} {
 		c.Flags().String("id", "", "Subscription ID")
 		c.Flags().String("idempotency-key", "", "Idempotency key")
 		c.MarkFlagRequired("id")
@@ -342,7 +341,6 @@ func init() {
 	subscriptionsCmd.AddCommand(subsConfirmCheckoutCmd)
 	subscriptionsCmd.AddCommand(subsStatusCmd)
 	subscriptionsCmd.AddCommand(subsUpdateCmd)
-	subscriptionsCmd.AddCommand(subsCancelCmd)
 	subscriptionsCmd.AddCommand(subsPauseCmd)
 	subscriptionsCmd.AddCommand(subsResumeCmd)
 	subscriptionsCmd.AddCommand(subsResetCycleCmd)

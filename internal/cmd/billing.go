@@ -312,6 +312,119 @@ var billingInvoiceDetailCmd = &cobra.Command{
 	},
 }
 
+var billingStripeConfigCmd = &cobra.Command{
+	Use:   "stripe-config",
+	Short: "Get Stripe publishable key for client-side card tokenization",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		client := getClient()
+		var result map[string]interface{}
+		err := client.DoControlPlane("GET", "/billing/stripe-config", nil, &result)
+		if err != nil {
+			return err
+		}
+
+		outputResult(result, func() {
+			data := extractData(result)
+			pairs := [][2]string{}
+			if pk, ok := data["publishable_key"].(string); ok {
+				pairs = append(pairs, [2]string{"publishable_key", pk})
+			}
+			if instr, ok := data["instructions"].(string); ok {
+				pairs = append(pairs, [2]string{"instructions", instr})
+			}
+			output.PrintKeyValue(pairs)
+		})
+		return nil
+	},
+}
+
+var billingPaymentLinkCmd = &cobra.Command{
+	Use:   "payment-link",
+	Short: "Create a Stripe-hosted payment URL for human-assisted payments",
+	Long: `Create a Stripe Checkout payment link that a human can open in a browser.
+Used for the human-assisted payment flow where the CLI cannot tokenize cards directly.
+
+The success_url and cancel_url are controlled by ModelsLab and cannot be overridden.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		purpose, _ := cmd.Flags().GetString("purpose")
+		amount, _ := cmd.Flags().GetFloat64("amount")
+		planID, _ := cmd.Flags().GetInt("plan-id")
+		idempotencyKey, _ := cmd.Flags().GetString("idempotency-key")
+
+		body := map[string]interface{}{
+			"purpose": purpose,
+		}
+		if purpose == "fund" {
+			if amount <= 0 {
+				return fmt.Errorf("--amount is required when purpose is 'fund'")
+			}
+			body["amount"] = amount
+		} else if purpose == "subscribe" {
+			if planID <= 0 {
+				return fmt.Errorf("--plan-id is required when purpose is 'subscribe'")
+			}
+			body["plan_id"] = planID
+		} else {
+			return fmt.Errorf("--purpose must be 'fund' or 'subscribe'")
+		}
+
+		client := getClient()
+		var result map[string]interface{}
+		err := client.DoControlPlaneIdempotent("POST", "/billing/payment-link", body, &result, idempotencyKey)
+		if err != nil {
+			return err
+		}
+
+		outputResult(result, func() {
+			data := extractData(result)
+			if url, ok := data["payment_url"].(string); ok {
+				fmt.Println("Payment URL:", url)
+				fmt.Println("Open this URL in a browser to complete payment.")
+			}
+			if sessionID, ok := data["session_id"].(string); ok {
+				fmt.Printf("Session ID: %s\n", sessionID)
+			}
+			if expiresAt, ok := data["expires_at"].(string); ok {
+				fmt.Printf("Expires at: %s\n", expiresAt)
+			}
+		})
+		return nil
+	},
+}
+
+var billingSetupIntentCmd = &cobra.Command{
+	Use:   "setup-intent",
+	Short: "Create a Stripe SetupIntent for saving payment methods",
+	Long: `Create a Stripe SetupIntent to save a payment method for future use.
+The returned client_secret can be used with Stripe.js or the Stripe API
+to confirm the setup and attach the payment method to the customer.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		idempotencyKey, _ := cmd.Flags().GetString("idempotency-key")
+
+		client := getClient()
+		var result map[string]interface{}
+		err := client.DoControlPlaneIdempotent("POST", "/billing/setup-intent", nil, &result, idempotencyKey)
+		if err != nil {
+			return err
+		}
+
+		outputResult(result, func() {
+			data := extractData(result)
+			pairs := [][2]string{}
+			for _, key := range []string{"setup_intent_id", "client_secret", "status"} {
+				if v, ok := data[key]; ok && v != nil {
+					pairs = append(pairs, [2]string{key, fmt.Sprintf("%v", v)})
+				}
+			}
+			if instr, ok := data["instructions"].(string); ok {
+				pairs = append(pairs, [2]string{"instructions", instr})
+			}
+			output.PrintKeyValue(pairs)
+		})
+		return nil
+	},
+}
+
 var billingInvoicePDFCmd = &cobra.Command{
 	Use:   "invoice-pdf",
 	Short: "Download invoice PDF",
@@ -366,6 +479,14 @@ func init() {
 	billingInvoiceDetailCmd.Flags().String("id", "", "Invoice ID")
 	billingInvoicePDFCmd.Flags().String("id", "", "Invoice ID")
 
+	billingPaymentLinkCmd.Flags().String("purpose", "", "Payment purpose: 'fund' or 'subscribe'")
+	billingPaymentLinkCmd.Flags().Float64("amount", 0, "Amount in USD (required when purpose is 'fund')")
+	billingPaymentLinkCmd.Flags().Int("plan-id", 0, "Plan ID (required when purpose is 'subscribe')")
+	billingPaymentLinkCmd.Flags().String("idempotency-key", "", "Idempotency key")
+	billingPaymentLinkCmd.MarkFlagRequired("purpose")
+
+	billingSetupIntentCmd.Flags().String("idempotency-key", "", "Idempotency key")
+
 	billingCmd.AddCommand(billingOverviewCmd)
 	billingCmd.AddCommand(billingPaymentMethodsCmd)
 	billingCmd.AddCommand(billingAddPMCmd)
@@ -376,4 +497,7 @@ func init() {
 	billingCmd.AddCommand(billingInvoicesCmd)
 	billingCmd.AddCommand(billingInvoiceDetailCmd)
 	billingCmd.AddCommand(billingInvoicePDFCmd)
+	billingCmd.AddCommand(billingStripeConfigCmd)
+	billingCmd.AddCommand(billingPaymentLinkCmd)
+	billingCmd.AddCommand(billingSetupIntentCmd)
 }

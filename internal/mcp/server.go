@@ -148,6 +148,32 @@ func (s *Server) registerControlPlaneTools() {
 		return result, err
 	})
 
+	s.addTool("billing-stripe-config", "Get Stripe publishable key for client-side card tokenization", nil, func(args map[string]interface{}) (interface{}, error) {
+		var result map[string]interface{}
+		err := s.client.DoControlPlane("GET", "/billing/stripe-config", nil, &result)
+		return result, err
+	})
+
+	s.addTool("billing-payment-link", "Create a Stripe-hosted payment URL for human-assisted payments", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"purpose": map[string]string{"type": "string", "description": "Payment purpose: 'fund' or 'subscribe'"},
+			"amount":  map[string]interface{}{"type": "number", "description": "Amount in USD (required when purpose is 'fund')"},
+			"plan_id": map[string]interface{}{"type": "integer", "description": "Plan ID (required when purpose is 'subscribe')"},
+		},
+		"required": []string{"purpose"},
+	}, func(args map[string]interface{}) (interface{}, error) {
+		var result map[string]interface{}
+		err := s.client.DoControlPlaneIdempotent("POST", "/billing/payment-link", args, &result, "")
+		return result, err
+	})
+
+	s.addTool("billing-setup-intent", "Create a Stripe SetupIntent for saving payment methods", nil, func(args map[string]interface{}) (interface{}, error) {
+		var result map[string]interface{}
+		err := s.client.DoControlPlaneIdempotent("POST", "/billing/setup-intent", nil, &result, "")
+		return result, err
+	})
+
 	s.addTool("wallet-balance", "Check wallet balance", nil, func(args map[string]interface{}) (interface{}, error) {
 		var result map[string]interface{}
 		err := s.client.DoControlPlane("GET", "/wallet/balance", nil, &result)
@@ -164,6 +190,31 @@ func (s *Server) registerControlPlaneTools() {
 	}, func(args map[string]interface{}) (interface{}, error) {
 		var result map[string]interface{}
 		err := s.client.DoControlPlaneIdempotent("POST", "/wallet/fund", args, &result, "")
+		return result, err
+	})
+
+	s.addTool("wallet-confirm-checkout", "Confirm a Stripe Checkout wallet funding session", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"session_id": map[string]string{"type": "string", "description": "Stripe checkout session ID (cs_...)"},
+		},
+		"required": []string{"session_id"},
+	}, func(args map[string]interface{}) (interface{}, error) {
+		var result map[string]interface{}
+		err := s.client.DoControlPlaneIdempotent("POST", "/wallet/confirm-checkout", args, &result, "")
+		return result, err
+	})
+
+	s.addTool("wallet-payment-status", "Check payment intent status", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"payment_intent_id": map[string]string{"type": "string", "description": "Payment intent ID"},
+		},
+		"required": []string{"payment_intent_id"},
+	}, func(args map[string]interface{}) (interface{}, error) {
+		id := fmt.Sprintf("%v", args["payment_intent_id"])
+		var result map[string]interface{}
+		err := s.client.DoControlPlane("GET", "/payments/"+id+"/status", nil, &result)
 		return result, err
 	})
 
@@ -191,6 +242,31 @@ func (s *Server) registerControlPlaneTools() {
 	s.addTool("subscriptions-list", "List user subscriptions", nil, func(args map[string]interface{}) (interface{}, error) {
 		var result map[string]interface{}
 		err := s.client.DoControlPlane("GET", "/subscriptions", nil, &result)
+		return result, err
+	})
+
+	s.addTool("subscriptions-confirm-checkout", "Confirm a Stripe Checkout subscription session", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"session_id": map[string]string{"type": "string", "description": "Stripe checkout session ID (cs_...)"},
+		},
+		"required": []string{"session_id"},
+	}, func(args map[string]interface{}) (interface{}, error) {
+		var result map[string]interface{}
+		err := s.client.DoControlPlaneIdempotent("POST", "/subscriptions/confirm-checkout", args, &result, "")
+		return result, err
+	})
+
+	s.addTool("subscriptions-status", "Check subscription status", map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"id": map[string]string{"type": "string", "description": "Subscription ID"},
+		},
+		"required": []string{"id"},
+	}, func(args map[string]interface{}) (interface{}, error) {
+		id := fmt.Sprintf("%v", args["id"])
+		var result map[string]interface{}
+		err := s.client.DoControlPlane("GET", "/subscriptions/"+id+"/status", nil, &result)
 		return result, err
 	})
 }
@@ -400,12 +476,19 @@ func (s *Server) ListTools() []ToolInfo {
 		{"models-search", "Search AI models"},
 		{"models-detail", "Get model details"},
 		{"billing-overview", "View billing overview"},
+		{"billing-stripe-config", "Get Stripe publishable key"},
+		{"billing-payment-link", "Create payment URL for human-assisted payments"},
+		{"billing-setup-intent", "Create SetupIntent for saving payment methods"},
 		{"wallet-balance", "Check wallet balance"},
 		{"wallet-fund", "Add funds to wallet"},
+		{"wallet-confirm-checkout", "Confirm wallet funding checkout session"},
+		{"wallet-payment-status", "Check payment intent status"},
 		{"usage-summary", "Get usage overview"},
 		{"teams-list", "List team members"},
 		{"subscriptions-plans", "List subscription plans"},
 		{"subscriptions-list", "List user subscriptions"},
+		{"subscriptions-confirm-checkout", "Confirm subscription checkout session"},
+		{"subscriptions-status", "Check subscription status"},
 		// Generation
 		{"text-to-image", "Generate images from text"},
 		{"image-to-image", "Transform images"},

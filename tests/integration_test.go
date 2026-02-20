@@ -182,7 +182,7 @@ func TestSubscriptions_Help(t *testing.T) {
 	assert.Equal(t, 0, code)
 	assert.Contains(t, stdout, "plans")
 	assert.Contains(t, stdout, "create")
-	assert.Contains(t, stdout, "cancel")
+	assert.Contains(t, stdout, "pause")
 }
 
 func TestTeams_Help(t *testing.T) {

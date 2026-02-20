@@ -4,7 +4,7 @@
 
 ## Project Overview
 
-Go CLI for the ModelsLab AI platform. 103 commands across 14 groups covering auth, profile, keys, models, generate (image/video/audio/3D/chat), billing, wallet, subscriptions, teams, usage, config, MCP, docs, and shell completions. ~10k lines across 26 Go files.
+Go CLI for the ModelsLab AI platform. 105 commands across 14 groups covering auth, profile, keys, models, generate (image/video/audio/3D/chat), billing, wallet, subscriptions, teams, usage, config, MCP, docs, and shell completions. ~10k lines across 26 Go files.
 
 **Stack**: Go 1.26 · Cobra + Viper · Charmbracelet (bubbletea, lipgloss, huh, glamour) · go-keyring · gojq · mcp-go · GoReleaser v2
 
@@ -37,9 +37,9 @@ MODELSLAB_TEST_TOKEN="<token>" MODELSLAB_TEST_API_KEY="<key>" go test ./tests/ -
 | `internal/cmd/keys.go` | 5 API key commands |
 | `internal/cmd/models.go` | 8 model discovery commands |
 | `internal/cmd/generate.go` | 20 generation commands + async polling + file download |
-| `internal/cmd/billing.go` | 10 billing commands + Stripe card tokenization |
+| `internal/cmd/billing.go` | 13 billing commands + Stripe card tokenization + payment links + setup intents |
 | `internal/cmd/wallet.go` | 10 wallet commands |
-| `internal/cmd/subscriptions.go` | 11 subscription commands |
+| `internal/cmd/subscriptions.go` | 10 subscription commands |
 | `internal/cmd/teams.go` | 7 team commands |
 | `internal/cmd/usage.go` | 3 usage commands |
 | `internal/cmd/config.go` | 6 config/profile commands |
@@ -151,4 +151,4 @@ Generation commands use `pollAndDownload()` for async workflows:
 
 ## Design Spec
 
-The authoritative spec for all 103 commands, API endpoints, and UX flows is in `cli.md` (1075 lines). Always consult it when adding features or fixing behavior.
+The authoritative spec for all 102 commands, API endpoints, and UX flows is in `cli.md`. Always consult it when adding features or fixing behavior.
