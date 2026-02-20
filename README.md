@@ -54,8 +54,11 @@ Download the latest binary for your platform from [GitHub Releases](https://gith
 ## Quick Start
 
 ```bash
+# New user? Sign up first
+modelslab auth signup --name "Your Name" --email you@example.com --password "..." --confirm-password "..."
+
 # Login to your account
-modelslab auth login
+modelslab auth login --email you@example.com --password "..."
 
 # Check your profile
 modelslab profile get
@@ -102,15 +105,40 @@ The CLI uses two credential types:
 - **Bearer token** — for control plane commands (auth, profile, billing, etc.)
 - **API key** — for generation commands (image, video, audio, etc.)
 
+### Signup & Onboarding
+
+Agents can programmatically create accounts and manage the full auth lifecycle:
+
+```bash
+# 1. Create account
+modelslab auth signup --name "Your Name" --email you@example.com --password "..." --confirm-password "..."
+
+# 2. Verify email (token from verification email)
+modelslab auth verify-email --token <verification-token>
+
+# 3. Login (auto-stores bearer token + API key in OS keychain)
+modelslab auth login --email you@example.com --password "..."
+
+# 4. Check status
+modelslab auth status
+
+# Password recovery
+modelslab auth forgot-password --email you@example.com
+modelslab auth reset-password --token <reset-token> --password "..." --confirm-password "..."
+
+# Token management
+modelslab auth tokens list
+modelslab auth tokens create --name "ci-token"
+```
+
+### Existing Users
+
 ```bash
 # Login gets both token and API key
 modelslab auth login --email you@example.com --password "..."
 
 # Or set API key manually
 modelslab config set api_key "your-api-key"
-
-# Check auth status
-modelslab auth status
 
 # Use environment variables
 export MODELSLAB_API_KEY="your-api-key"
