@@ -145,6 +145,61 @@ export MODELSLAB_API_KEY="your-api-key"
 export MODELSLAB_TOKEN="your-bearer-token"
 ```
 
+## Model Selection
+
+Every generation command accepts a `--model` flag to specify which AI model to use. With 50,000+ models available, discovering the right one is a key workflow.
+
+### Discovering Models
+
+```bash
+# Search by name
+modelslab models search --search "flux"
+
+# Filter by feature category
+modelslab models search --feature imagen        # Image generation models
+modelslab models search --feature video_fusion  # Video generation models
+modelslab models search --feature audio_gen     # Audio/voice models
+modelslab models search --feature llmaster      # LLM/chat models
+modelslab models search --feature threed        # 3D generation models
+
+# Filter by base model architecture
+modelslab models search --base-model sdxl
+modelslab models search --base-model flux
+
+# Get detailed info about a specific model
+modelslab models detail --id flux
+modelslab models detail --id cogvideox
+```
+
+### Popular Models
+
+| Model ID | Category | Description |
+|----------|----------|-------------|
+| `flux` | Image | Flux Dev — fast, high-quality images |
+| `midjourney` | Image | MidJourney-style artistic images |
+| `sdxl` | Image | Stable Diffusion XL base |
+| `seedance-t2v` | Video | Seedance text-to-video |
+| `seedance-i2v` | Video | Seedance image-to-video |
+| `cogvideox` | Video | CogVideoX video generation |
+| `eleven_multilingual_v2` | Audio | ElevenLabs multilingual TTS |
+| `eleven_sound_effect` | Audio | ElevenLabs sound effects |
+| `scribe_v1` | Audio | ElevenLabs speech-to-text |
+| `meta-llama-3-8B-instruct` | LLM | Meta Llama 3 8B chat |
+| `deepseek-ai-DeepSeek-R1-Distill-Llama-70B` | LLM | DeepSeek R1 reasoning |
+| `gemini-2.0-flash-001` | LLM | Google Gemini 2.0 Flash |
+
+### Setting a Default Model
+
+```bash
+# Set default model for image generation
+modelslab config set generation.default_model flux
+
+# Override per-command with --model
+modelslab generate image --prompt "sunset" --model midjourney
+```
+
+Browse all models: https://modelslab.com/models
+
 ## Output Modes
 
 ```bash
@@ -161,26 +216,32 @@ modelslab models search --search "flux" --output json --jq '.[].model_id'
 ## Generation
 
 ```bash
-# Text to image
-modelslab generate image --prompt "sunset" --model sdxl
+# Text to image (specify model with --model)
+modelslab generate image --prompt "sunset over mountains" --model flux
 
 # Image to image
-modelslab generate image-to-image --prompt "oil painting" --init-image https://...
+modelslab generate image-to-image --prompt "oil painting style" --model midjourney --init-image https://...
 
 # Text to video
-modelslab generate video --prompt "ocean waves"
+modelslab generate video --prompt "ocean waves crashing" --model seedance-t2v
+
+# Image to video
+modelslab generate video --prompt "slowly zooming in" --model seedance-i2v --init-image https://...
 
 # Text to speech
 modelslab generate tts --text "Hello world" --language en
 
-# Chat completion
-modelslab generate chat --message "Explain quantum computing" --model gpt-4
+# Chat completion (OpenAI-compatible)
+modelslab generate chat --message "Explain quantum computing" --model meta-llama-3-8B-instruct
+
+# Music generation
+modelslab generate music --prompt "upbeat electronic music"
 
 # Check generation status
 modelslab generate fetch --id 12345 --type image
 
 # Skip polling (async)
-modelslab generate image --prompt "sunset" --no-wait
+modelslab generate image --prompt "sunset" --model flux --no-wait
 ```
 
 ## MCP Server Mode
