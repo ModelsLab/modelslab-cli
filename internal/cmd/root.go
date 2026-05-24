@@ -1,12 +1,18 @@
 package cmd
 
 import (
+	"context"
+	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/ModelsLab/modelslab-cli/internal/api"
 	"github.com/ModelsLab/modelslab-cli/internal/auth"
 	"github.com/ModelsLab/modelslab-cli/internal/config"
 	"github.com/ModelsLab/modelslab-cli/internal/output"
+	"github.com/ModelsLab/modelslab-cli/internal/updater"
 	"github.com/spf13/cobra"
 )
 
@@ -16,12 +22,13 @@ var (
 	cliDate    = "unknown"
 
 	// Global flags
-	flagOutput  string
-	flagProfile string
-	flagBaseURL string
-	flagAPIKey  string
-	flagJQ      string
-	flagNoColor bool
+	flagOutput        string
+	flagProfile       string
+	flagBaseURL       string
+	flagAPIKey        string
+	flagJQ            string
+	flagNoColor       bool
+	flagNoUpdateCheck bool
 
 	// Shared API client
 	apiClient *api.Client
@@ -31,6 +38,7 @@ func SetVersion(version, commit, date string) {
 	cliVersion = version
 	cliCommit = commit
 	cliDate = date
+	rootCmd.Version = version
 }
 
 var rootCmd = &cobra.Command{
@@ -43,6 +51,9 @@ handle billing, and interact with the full platform from the terminal.
 
 Designed for both humans and AI agents.`,
 	Version: cliVersion,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return cmd.Help()
+	},
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		if cmd.Name() == "__complete" {
 			return nil
@@ -69,6 +80,8 @@ Designed for both humans and AI agents.`,
 			flagNoColor = true
 		}
 
+		maybeNotifyUpdate(cmd)
+
 		return nil
 	},
 	SilenceUsage:  true,
@@ -82,6 +95,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&flagAPIKey, "api-key", "", "Override API key")
 	rootCmd.PersistentFlags().StringVar(&flagJQ, "jq", "", "Filter JSON output with jq expression")
 	rootCmd.PersistentFlags().BoolVar(&flagNoColor, "no-color", false, "Disable colored output")
+	rootCmd.PersistentFlags().BoolVar(&flagNoUpdateCheck, "no-update-check", false, "Disable automatic update check for this command")
 
 	rootCmd.AddCommand(authCmd)
 	rootCmd.AddCommand(profileCmd)
@@ -97,6 +111,7 @@ func init() {
 	rootCmd.AddCommand(mcpCmd)
 	rootCmd.AddCommand(docsCmd)
 	rootCmd.AddCommand(completionCmd)
+	rootCmd.AddCommand(updateCmd)
 }
 
 func Execute() error {
@@ -142,4 +157,62 @@ func outputResult(data interface{}, humanFn func()) {
 	default:
 		humanFn()
 	}
+}
+
+func maybeNotifyUpdate(cmd *cobra.Command) {
+	if shouldSkipUpdateNotification(cmd) {
+		return
+	}
+
+	intervalHours := config.GetInt("updates.interval_hours")
+	if intervalHours <= 0 {
+		intervalHours = 24
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	defer cancel()
+
+	info, err := updater.CachedCheck(ctx, updater.CheckOptions{
+		CurrentVersion: cliVersion,
+		Repo:           firstNonEmpty(config.Get("updates.github_repo"), updater.DefaultRepo),
+		UserAgent:      "modelslab-cli/" + cliVersion,
+	}, filepath.Join(config.ConfigDir(), "update-check.json"), time.Duration(intervalHours)*time.Hour)
+	if err != nil || info == nil || !info.UpdateAvailable {
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "Update available: ModelsLab CLI %s (current %s). Run `modelslab update`.\n\n", formatVersion(info.LatestVersion), formatVersion(info.CurrentVersion))
+}
+
+func shouldSkipUpdateNotification(cmd *cobra.Command) bool {
+	if flagNoUpdateCheck || os.Getenv("MODELSLAB_NO_UPDATE_CHECK") != "" {
+		return true
+	}
+	if !config.GetBool("updates.auto_check") {
+		return true
+	}
+	if flagOutput == string(output.FormatJSON) || flagJQ != "" {
+		return true
+	}
+	if !updater.IsComparableVersion(cliVersion) {
+		return true
+	}
+
+	path := cmd.CommandPath()
+	if strings.Contains(path, " __complete") ||
+		strings.HasPrefix(path, "modelslab update") ||
+		strings.HasPrefix(path, "modelslab completion") ||
+		strings.HasPrefix(path, "modelslab mcp") {
+		return true
+	}
+
+	return false
+}
+
+func formatVersion(version string) string {
+	version = updater.NormalizeVersion(version)
+	if version == "" {
+		return "unknown"
+	}
+	return "v" + version
 }

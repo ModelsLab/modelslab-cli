@@ -45,6 +45,9 @@ func Init() error {
 	viper.SetDefault("generation.default_model", "sdxl")
 	viper.SetDefault("generation.auto_download", true)
 	viper.SetDefault("generation.output_dir", "./generated")
+	viper.SetDefault("updates.auto_check", true)
+	viper.SetDefault("updates.interval_hours", 24)
+	viper.SetDefault("updates.github_repo", "ModelsLab/modelslab-cli")
 
 	// Environment variables
 	viper.SetEnvPrefix("MODELSLAB")
@@ -127,6 +130,14 @@ func Set(key, value string) error {
 
 func Get(key string) string {
 	return viper.GetString(key)
+}
+
+func GetBool(key string) bool {
+	return viper.GetBool(key)
+}
+
+func GetInt(key string) int {
+	return viper.GetInt(key)
 }
 
 func AllSettings() map[string]interface{} {

@@ -51,13 +51,32 @@ Download the latest binary for your platform from [GitHub Releases](https://gith
 | Linux | ARM64 | `modelslab_linux_arm64.tar.gz` |
 | Windows | x86_64 | `modelslab_windows_amd64.zip` |
 
+### Update
+
+```bash
+# Check whether a newer release is available
+modelslab update --check
+
+# Download, verify, and install the latest GitHub release
+modelslab update
+```
+
+The CLI also checks for updates periodically during normal human-readable commands and prints a short notice when a newer release is available. It stays silent for `--output json`, `--jq`, shell completions, and MCP server mode. Disable the startup check for one command with `--no-update-check`, or persistently with:
+
+```bash
+modelslab config set updates.auto_check false
+```
+
 ## Quick Start
 
 ```bash
 # New user? Sign up first
 modelslab auth signup --name "Your Name" --email you@example.com --password "..." --confirm-password "..."
 
-# Login to your account
+# Login to your account in the browser
+modelslab auth login --browser
+
+# Or login with email/password
 modelslab auth login --email you@example.com --password "..."
 
 # Check your profile
@@ -96,6 +115,7 @@ modelslab config        Manage CLI configuration (set, get, profiles)
 modelslab mcp           MCP server mode (serve, tools)
 modelslab docs          Access API documentation (openapi, changelog)
 modelslab completion    Generate shell completions (bash, zsh, fish, powershell)
+modelslab update        Update the ModelsLab CLI
 ```
 
 ## Authentication
@@ -116,7 +136,10 @@ modelslab auth signup --name "Your Name" --email you@example.com --password "...
 # 2. Verify email (token from verification email)
 modelslab auth verify-email --token <verification-token>
 
-# 3. Login (auto-stores bearer token + API key in OS keychain)
+# 3. Login in the browser (auto-stores bearer token + API key in OS keychain)
+modelslab auth login --browser
+
+# Or use email/password
 modelslab auth login --email you@example.com --password "..."
 
 # 4. Check status
@@ -134,7 +157,10 @@ modelslab auth tokens create --name "ci-token"
 ### Existing Users
 
 ```bash
-# Login gets both token and API key
+# Browser login opens Chrome, asks you to grant CLI access, and stores both credentials
+modelslab auth login --browser
+
+# Email/password login also gets both token and API key
 modelslab auth login --email you@example.com --password "..."
 
 # Or set API key manually

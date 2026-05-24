@@ -1,10 +1,22 @@
 package cmd
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
 	"fmt"
+	"html"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
+	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/ModelsLab/modelslab-cli/internal/api"
 	"github.com/ModelsLab/modelslab-cli/internal/auth"
@@ -19,11 +31,30 @@ var authCmd = &cobra.Command{
 	Long:  "Login, logout, and manage authentication tokens and profiles.",
 }
 
+type browserLoginCallback struct {
+	AccessToken          string
+	APIKey               string
+	Email                string
+	Error                string
+	ExpiresAt            string
+	ModelID              string
+	State                string
+	TokenExpiry          string
+	TokenExpiryEffective string
+	TokenLifetimeCapped  string
+	TokenType            string
+}
+
 // --- auth login ---
 var authLoginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Login to ModelsLab",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		useBrowser, _ := cmd.Flags().GetBool("browser")
+		if useBrowser {
+			return runBrowserLogin(cmd)
+		}
+
 		email, _ := cmd.Flags().GetString("email")
 		password, _ := cmd.Flags().GetString("password")
 		expiry, _ := cmd.Flags().GetString("expiry")
@@ -54,10 +85,11 @@ var authLoginCmd = &cobra.Command{
 		client := getClient()
 		var result map[string]interface{}
 		err := client.DoControlPlane("POST", "/auth/login", map[string]string{
-			"email":       email,
-			"password":    password,
-			"expiry":      expiry,
-			"device_name": deviceName,
+			"email":        email,
+			"password":     password,
+			"expiry":       expiry,
+			"token_expiry": expiry,
+			"device_name":  deviceName,
 		}, &result)
 		if err != nil {
 			apiErr, ok := err.(*api.APIError)
@@ -100,6 +132,264 @@ var authLoginCmd = &cobra.Command{
 		})
 		return nil
 	},
+}
+
+func runBrowserLogin(cmd *cobra.Command) error {
+	expiry, _ := cmd.Flags().GetString("expiry")
+	deviceName, _ := cmd.Flags().GetString("device-name")
+	callbackPort, _ := cmd.Flags().GetInt("callback-port")
+	timeout, _ := cmd.Flags().GetDuration("timeout")
+	noOpen, _ := cmd.Flags().GetBool("no-open")
+
+	if expiry == "" {
+		expiry = "1_month"
+	}
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
+	}
+	if callbackPort < 0 || callbackPort > 65535 {
+		return fmt.Errorf("--callback-port must be between 0 and 65535")
+	}
+	if deviceName == "" {
+		hostname, _ := os.Hostname()
+		if hostname == "" {
+			hostname = "localhost"
+		}
+		deviceName = "modelslab-cli@" + hostname
+	}
+
+	state, err := randomOAuthState()
+	if err != nil {
+		return err
+	}
+
+	listenAddr := "127.0.0.1:0"
+	if callbackPort > 0 {
+		listenAddr = "127.0.0.1:" + strconv.Itoa(callbackPort)
+	}
+
+	listener, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		return fmt.Errorf("could not start local OAuth callback server: %w", err)
+	}
+
+	callbackURL := "http://" + listener.Addr().String() + "/callback"
+	resultCh := make(chan browserLoginCallback, 1)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/callback", browserLoginCallbackHandler(state, resultCh))
+
+	server := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	serveErrCh := make(chan error, 1)
+	go func() {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveErrCh <- err
+		}
+	}()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	loginURL, err := buildBrowserLoginURL(flagBaseURL, callbackURL, state, deviceName, expiry)
+	if err != nil {
+		return err
+	}
+
+	if noOpen {
+		fmt.Fprintf(os.Stderr, "Open this URL in Chrome to authorize ModelsLab CLI:\n%s\n\n", loginURL)
+	} else {
+		fmt.Fprintln(os.Stderr, "Opening Google Chrome for ModelsLab login...")
+		if err := openBrowser(loginURL); err != nil {
+			fmt.Fprintf(os.Stderr, "Could not open Chrome automatically: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Open this URL manually:\n%s\n\n", loginURL)
+		}
+	}
+	fmt.Fprintln(os.Stderr, "Waiting for browser authorization...")
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	var callback browserLoginCallback
+	select {
+	case callback = <-resultCh:
+	case err := <-serveErrCh:
+		return fmt.Errorf("OAuth callback server failed: %w", err)
+	case <-timer.C:
+		return fmt.Errorf("browser login timed out after %s", timeout)
+	}
+
+	if callback.Error != "" {
+		return fmt.Errorf("browser login failed: %s", callback.Error)
+	}
+	if callback.State != state {
+		return fmt.Errorf("browser login returned an invalid state")
+	}
+	if callback.APIKey == "" {
+		return fmt.Errorf("browser login did not return an API key")
+	}
+
+	if callback.AccessToken != "" {
+		if err := auth.StoreToken(flagProfile, callback.AccessToken); err != nil {
+			return fmt.Errorf("could not store access token: %w", err)
+		}
+	}
+	if err := auth.StoreAPIKey(flagProfile, callback.APIKey); err != nil {
+		return fmt.Errorf("could not store API key: %w", err)
+	}
+	if callback.Email != "" {
+		if err := auth.StoreEmail(flagProfile, callback.Email); err != nil {
+			return fmt.Errorf("could not store email: %w", err)
+		}
+	}
+	apiClient = nil
+
+	data := map[string]interface{}{
+		"access_token":           callback.AccessToken,
+		"api_key":                callback.APIKey,
+		"email":                  callback.Email,
+		"expires_at":             callback.ExpiresAt,
+		"message":                "Browser login successful.",
+		"model_id":               callback.ModelID,
+		"token_expiry":           callback.TokenExpiry,
+		"token_expiry_effective": callback.TokenExpiryEffective,
+		"token_lifetime_capped":  parseCallbackBool(callback.TokenLifetimeCapped),
+		"token_type":             firstNonEmpty(callback.TokenType, "Bearer"),
+	}
+	result := map[string]interface{}{
+		"data":  data,
+		"error": nil,
+	}
+
+	outputResult(result, func() {
+		output.PrintSuccess(fmt.Sprintf("Logged in with browser OAuth (profile: %s)", flagProfile))
+		if callback.Email != "" {
+			fmt.Printf("Email: %s\n", callback.Email)
+		}
+		if callback.AccessToken != "" {
+			fmt.Printf("Token: %s\n", output.MaskSecret(callback.AccessToken))
+		}
+		fmt.Printf("API Key: %s\n", output.MaskSecret(callback.APIKey))
+	})
+
+	return nil
+}
+
+func browserLoginCallbackHandler(expectedState string, resultCh chan<- browserLoginCallback) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/callback" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method != http.MethodPost && r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET, POST")
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		if r.Method == http.MethodPost {
+			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+		}
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Invalid callback payload", http.StatusBadRequest)
+			return
+		}
+
+		callback := browserLoginCallback{
+			AccessToken:          r.FormValue("access_token"),
+			APIKey:               r.FormValue("api_key"),
+			Email:                r.FormValue("email"),
+			Error:                r.FormValue("error"),
+			ExpiresAt:            r.FormValue("expires_at"),
+			ModelID:              r.FormValue("model_id"),
+			State:                r.FormValue("state"),
+			TokenExpiry:          r.FormValue("token_expiry"),
+			TokenExpiryEffective: r.FormValue("token_expiry_effective"),
+			TokenLifetimeCapped:  r.FormValue("token_lifetime_capped"),
+			TokenType:            r.FormValue("token_type"),
+		}
+
+		if callback.State != expectedState {
+			http.Error(w, "Invalid OAuth state", http.StatusBadRequest)
+			return
+		}
+		if callback.Error == "" && callback.APIKey == "" {
+			http.Error(w, "Missing API key", http.StatusBadRequest)
+			return
+		}
+
+		select {
+		case resultCh <- callback:
+		default:
+		}
+
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		title := "ModelsLab CLI login complete"
+		if callback.Error != "" {
+			title = "ModelsLab CLI login failed"
+		}
+		fmt.Fprintf(w, "<!doctype html><html><head><meta charset=\"utf-8\"><title>%s</title></head><body><h1>%s</h1><p>You can close this browser tab and return to the terminal.</p></body></html>", html.EscapeString(title), html.EscapeString(title))
+	}
+}
+
+func buildBrowserLoginURL(baseURL, callbackURL, state, deviceName, tokenExpiry string) (string, error) {
+	authorizeURL, err := url.Parse(strings.TrimRight(baseURL, "/") + "/auth/modelslab-cli/oauth/authorize")
+	if err != nil {
+		return "", fmt.Errorf("could not build browser login URL: %w", err)
+	}
+
+	query := authorizeURL.Query()
+	query.Set("client_name", "ModelsLab CLI")
+	query.Set("device_name", deviceName)
+	query.Set("redirect_uri", callbackURL)
+	query.Set("state", state)
+	query.Set("token_expiry", tokenExpiry)
+	authorizeURL.RawQuery = query.Encode()
+
+	return authorizeURL.String(), nil
+}
+
+func randomOAuthState() (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", fmt.Errorf("could not generate OAuth state: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(bytes), nil
+}
+
+func openBrowser(rawURL string) error {
+	switch runtime.GOOS {
+	case "darwin":
+		if err := exec.Command("open", "-a", "Google Chrome", rawURL).Run(); err == nil {
+			return nil
+		}
+		return exec.Command("open", rawURL).Start()
+	case "windows":
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", rawURL).Start()
+	default:
+		return exec.Command("xdg-open", rawURL).Start()
+	}
+}
+
+func parseCallbackBool(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // --- auth signup ---
@@ -199,10 +489,10 @@ var authStatusCmd = &cobra.Command{
 		apiKey, _ := auth.GetAPIKey(profile)
 
 		data := map[string]interface{}{
-			"profile":        profile,
-			"email":          email,
-			"authenticated":  tokenErr == nil,
-			"has_api_key":    apiKey != "",
+			"profile":       profile,
+			"email":         email,
+			"authenticated": tokenErr == nil,
+			"has_api_key":   apiKey != "",
 		}
 
 		outputResult(data, func() {
@@ -427,8 +717,12 @@ func init() {
 	// auth login
 	authLoginCmd.Flags().String("email", "", "Account email")
 	authLoginCmd.Flags().String("password", "", "Account password")
+	authLoginCmd.Flags().Bool("browser", false, "Log in with browser OAuth instead of email and password")
+	authLoginCmd.Flags().Int("callback-port", 0, "Local callback port for browser OAuth (0 chooses a free port)")
 	authLoginCmd.Flags().String("expiry", "1_month", "Token expiry: 1_week, 1_month, 3_months, 6_months, 1_year, never")
 	authLoginCmd.Flags().String("device-name", "", "Device name for token")
+	authLoginCmd.Flags().Bool("no-open", false, "Print the browser login URL without opening Chrome")
+	authLoginCmd.Flags().Duration("timeout", 5*time.Minute, "Browser OAuth timeout")
 
 	// auth signup
 	authSignupCmd.Flags().String("email", "", "Account email")
