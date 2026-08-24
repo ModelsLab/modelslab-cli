@@ -37,6 +37,71 @@ jobs:
       - name: Integration Tests (no auth)
         run: go test ./tests/ -v -count=1 -timeout 120s
 
+  # The npm and PyPI packagers consume goreleaser's output. Nothing else in CI
+  # exercises them, so without this a packaging break is only discovered by a
+  # tag push — i.e. by a broken release.
+  packaging:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: build --snapshot --clean
+
+      - name: Collect binaries
+        run: |
+          set -euo pipefail
+          jq -r '.[] | select(.type == "Binary") | "\(.goos)_\(.goarch)\t\(.path)"' \
+            dist/artifacts.json |
+          while IFS=$'\t' read -r target path; do
+            mkdir -p "artifacts/$target"
+            cp "$path" "artifacts/$target/"
+          done
+          test "$(find artifacts -type f | wc -l)" -eq 6
+
+      - name: Build npm packages
+        run: node packaging/npm/build.mjs v0.0.0 artifacts dist/npm
+
+      - name: Install and run the npm package
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/npmcheck && cd /tmp/npmcheck && npm init -y >/dev/null
+          npm install --no-audit --no-fund \
+            "$GITHUB_WORKSPACE/dist/npm/modelslab-cli-linux-x64" \
+            "$GITHUB_WORKSPACE/dist/npm/modelslab-cli"
+          # The real check: the shim resolves the binary and the binary runs.
+          ./node_modules/.bin/modelslab --version
+
+      - name: Build PyPI wheels
+        run: python3 packaging/pypi/build.py v0.0.0 artifacts dist/pypi
+
+      - name: Install and run the wheel
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet twine
+          python3 -m twine check dist/pypi/*.whl
+          python3 -m pip install --quiet \
+            dist/pypi/modelslab_cli-0.0.0-py3-none-manylinux2014_x86_64.whl
+          # Catches the executable-bit bug: twine check passes a wheel whose
+          # binary unpacks 0644, and only running it fails.
+          modelslab --version
+
   build-matrix:
     runs-on: ubuntu-latest
     needs: test
