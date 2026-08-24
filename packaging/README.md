@@ -25,9 +25,24 @@ node packaging/npm/build.mjs v1.2.3 artifacts dist/npm
 ```
 
 Produces seven packages: one entry package (`modelslab-cli`) whose only content
-is a launcher shim, plus one package per platform holding just the binary and
-the `os`/`cpu` fields npm filters on. The entry package declares the six as
-`optionalDependencies`, so npm installs exactly the one that matches.
+is a launcher shim, plus one package per platform (`@modelslab/cli-<os>-<arch>`)
+holding the binary, a README and the `os`/`cpu` fields npm filters on. The entry
+package declares the six as `optionalDependencies`, so npm installs exactly the
+one that matches.
+
+**Platform packages are scoped; the entry package is not.** Unscoped
+`modelslab-cli-win32-x64` was refused during the v0.1.2 release with
+`403 Package name triggered spam detection` — a thin, unscoped package whose name
+matches a very common platform-suffix pattern is precisely the shape that
+heuristic targets. A scope proves ownership and sidesteps it, which is why every
+comparable CLI is scoped (`@esbuild/win32-x64`, `@biomejs/cli-win32-x64`,
+`@anthropic-ai/claude-code-win32-x64`); esbuild's unscoped `esbuild-windows-64`
+has been frozen at 0.15.18 since they migrated. The entry package stays unscoped
+so `npm install -g modelslab-cli` is unchanged and findable by name.
+
+The five unscoped platform packages published by v0.1.2 are orphaned at that
+version. They are unreachable — no entry package ever referenced them — and npm
+does not allow unpublishing them, so they are simply left alone.
 
 The alternative — one package with a postinstall that downloads a binary — was
 rejected deliberately. It needs network at install time and produces a silently
