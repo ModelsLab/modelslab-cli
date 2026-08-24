@@ -7,6 +7,10 @@ on:
 
 permissions:
   contents: write
+  # Required by `npm publish --provenance`: npm mints a signed provenance
+  # attestation from a GitHub OIDC token, and without this it fails the publish
+  # outright rather than degrading to an unsigned one.
+  id-token: write
 
 jobs:
   test:
