@@ -84,11 +84,18 @@ jobs:
         if: ${{ env.NODE_AUTH_TOKEN != '' }}
         run: bash packaging/npm/publish.sh dist/npm
 
+      # `!cancelled()` on every PyPI step, not just the upload. v0.1.3 had the
+      # guard on the upload alone: npm failed, the build step was skipped as a
+      # normal downstream skip, and the upload then ran and died on
+      # "Cannot find file dist/pypi/*.whl". A guard on the last step of a chain
+      # protects nothing.
       - uses: actions/setup-python@v5
+        if: ${{ !cancelled() }}
         with:
           python-version: "3.12"
 
       - name: Build PyPI wheels
+        if: ${{ !cancelled() }}
         run: python3 packaging/pypi/build.py "${GITHUB_REF_NAME}" artifacts dist/pypi
 
       # `if: always()` because npm and PyPI are independent registries and a
@@ -100,7 +107,7 @@ jobs:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
         # `secrets` is not an available context in a step-level `if` — hence env.
-        if: ${{ always() && env.TWINE_PASSWORD != '' }}
+        if: ${{ !cancelled() && env.TWINE_PASSWORD != '' }}
         run: |
           set -euo pipefail
           python3 -m pip install --quiet twine
