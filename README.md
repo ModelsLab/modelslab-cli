@@ -6,6 +6,26 @@ The official command-line interface for [ModelsLab](https://modelslab.com) — m
 
 ## Installation
 
+### npm
+
+```bash
+npm install -g modelslab-cli
+```
+
+Ships the prebuilt binary for your platform as an optional dependency — nothing
+is compiled and no install script runs.
+
+### PyPI
+
+```bash
+pip install modelslab-cli
+```
+
+Platform wheels; no build step and no Python dependencies.
+
+<sub>Both register the `modelslab` command. The `modelslab` packages on npm and
+PyPI are the **SDKs**, not this CLI — hence the `-cli` suffix.</sub>
+
 ### macOS (Homebrew)
 
 ```bash

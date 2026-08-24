@@ -19,6 +19,9 @@ go.work.sum
 # GoReleaser
 dist/
 
+# Binaries collected from a release for the npm/PyPI packagers
+artifacts/
+
 # IDE
 .idea/
 .vscode/
@@ -35,3 +38,4 @@ Thumbs.db
 
 # Generated output
 generated/
+__pycache__/
