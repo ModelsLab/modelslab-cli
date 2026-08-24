@@ -34,9 +34,20 @@ rejected deliberately. It needs network at install time and produces a silently
 broken install under `npm ci --ignore-scripts`, which many CI and agent sandboxes
 set. Six small packages buy an install that cannot half-work.
 
-**Publish platform packages before the entry package.** The entry package pins
-exact versions of all six; publishing it first leaves a window where every
-install fails.
+Publishing goes through `packaging/npm/publish.sh`, which exists because two
+things bit the v0.1.2 release:
+
+- **Order.** The entry package pins exact versions of all six platform packages,
+  so publishing it first leaves a window where every install fails. Platform
+  packages go first.
+- **npm's spam heuristic.** Six similarly-named packages published back to back
+  tripped it on the sixth with `403 Package name triggered spam detection`. It is
+  rate-shaped rather than permanent, so the script paces publishes and retries
+  that specific failure with backoff.
+- **Re-running.** npm refuses to republish an existing version, so a naive retry
+  of a half-finished release fails on the packages that succeeded and never
+  reaches the ones that did not. The script skips versions already on the
+  registry, which makes a re-run the correct recovery for a partial publish.
 
 ## PyPI — `packaging/pypi/build.py`
 
@@ -67,7 +78,11 @@ Two things that are easy to get wrong and are covered by CI:
 
 `.github/workflows/release.yml` runs both builders on a tag and publishes if the
 corresponding token is configured. Missing tokens skip that registry rather than
-failing the release.
+failing the release, and the PyPI step runs even when npm fails — they are
+independent registries, and in v0.1.2 an npm failure meant PyPI never ran at all.
+
+Re-running the release job is the supported recovery for a partial publish: both
+publishers skip what is already on their registry.
 
 | Secret | Registry |
 | --- | --- |

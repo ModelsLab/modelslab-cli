@@ -82,15 +82,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         if: ${{ env.NODE_AUTH_TOKEN != '' }}
-        run: |
-          set -euo pipefail
-          # Platform packages first: the entry package depends on them, and an
-          # entry published against versions that do not exist yet is an install
-          # that fails for everyone until the next step lands.
-          for pkg in dist/npm/modelslab-cli-*; do
-            npm publish "$pkg" --access public --provenance
-          done
-          npm publish dist/npm/modelslab-cli --access public --provenance
+        run: bash packaging/npm/publish.sh dist/npm
 
       - uses: actions/setup-python@v5
         with:
@@ -99,13 +91,20 @@ jobs:
       - name: Build PyPI wheels
         run: python3 packaging/pypi/build.py "${GITHUB_REF_NAME}" artifacts dist/pypi
 
+      # `if: always()` because npm and PyPI are independent registries and a
+      # failure at one is not a reason to skip the other. v0.1.2 published five
+      # npm packages, tripped npm's spam heuristic on the sixth, and PyPI never
+      # ran at all — one registry's flakiness took the whole release with it.
       - name: Publish to PyPI
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
-        if: ${{ env.TWINE_PASSWORD != '' }}
+        # `secrets` is not an available context in a step-level `if` — hence env.
+        if: ${{ always() && env.TWINE_PASSWORD != '' }}
         run: |
           set -euo pipefail
           python3 -m pip install --quiet twine
           python3 -m twine check dist/pypi/*.whl
-          python3 -m twine upload dist/pypi/*.whl
+          # --skip-existing so a re-run after a partial failure is safe; PyPI
+          # rejects a repeated version outright and would fail the retry.
+          python3 -m twine upload --skip-existing dist/pypi/*.whl
