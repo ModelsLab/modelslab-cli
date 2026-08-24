@@ -83,7 +83,7 @@ jobs:
           set -euo pipefail
           mkdir -p /tmp/npmcheck && cd /tmp/npmcheck && npm init -y >/dev/null
           npm install --no-audit --no-fund \
-            "$GITHUB_WORKSPACE/dist/npm/modelslab-cli-linux-x64" \
+            "$GITHUB_WORKSPACE/dist/npm/@modelslab/cli-linux-x64" \
             "$GITHUB_WORKSPACE/dist/npm/modelslab-cli"
           # The real check: the shim resolves the binary and the binary runs.
           ./node_modules/.bin/modelslab --version

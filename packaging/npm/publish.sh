@@ -20,6 +20,9 @@ set -euo pipefail
 
 DIST="${1:?usage: publish.sh <dist/npm dir>}"
 ENTRY="modelslab-cli"
+# Platform packages are scoped, so they land one directory deeper than the entry
+# package: dist/npm/@modelslab/cli-<os>-<arch>.
+PLATFORM_GLOB="${DIST}/@*/*"
 MAX_ATTEMPTS=5
 
 already_published() {
@@ -68,13 +71,23 @@ publish_one() {
     return 1
 }
 
-for dir in "${DIST}"/${ENTRY}-*; do
+published_any=0
+for dir in ${PLATFORM_GLOB}; do
     [ -d "$dir" ] || continue
     publish_one "$dir"
+    published_any=1
     # Pace the platform packages. Publishing them as fast as the API allows is
-    # what looks like spam in the first place.
+    # part of what looks like spam in the first place.
     sleep 10
 done
+
+# Guard against a glob that silently matched nothing: the entry package pins all
+# six platform packages, so publishing it alone creates a version that resolves
+# for nobody.
+if [ "$published_any" -eq 0 ]; then
+    echo "fatal   no platform packages found under ${PLATFORM_GLOB}" >&2
+    exit 1
+fi
 
 publish_one "${DIST}/${ENTRY}"
 

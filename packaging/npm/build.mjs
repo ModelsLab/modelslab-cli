@@ -21,6 +21,21 @@ import { mkdirSync, writeFileSync, copyFileSync, existsSync, chmodSync } from 'n
 import { join, resolve } from 'node:path';
 
 const NAME = 'modelslab-cli';
+/*
+ * Platform packages are SCOPED; the entry package is not.
+ *
+ * Unscoped `modelslab-cli-win32-x64` was refused by npm with
+ * `403 Package name triggered spam detection` — a thin, unscoped package whose
+ * name matches a very common platform-suffix pattern is the exact shape that
+ * heuristic targets. A scope proves ownership and sidesteps it, which is why
+ * every comparable CLI is scoped (@esbuild/win32-x64, @biomejs/cli-win32-x64,
+ * @anthropic-ai/claude-code-win32-x64). esbuild's unscoped esbuild-windows-64
+ * is frozen at 0.15.18 for the same reason.
+ *
+ * The entry package stays unscoped so `npm install -g modelslab-cli` is
+ * unchanged and still discoverable by name.
+ */
+const SCOPE = '@modelslab';
 const BIN = 'modelslab';
 const REPO = 'https://github.com/ModelsLab/modelslab-cli';
 const DESCRIPTION =
@@ -73,7 +88,7 @@ for (const target of TARGETS) {
         process.exit(1);
     }
 
-    const pkgName = `${NAME}-${target.os}-${target.cpu}`;
+    const pkgName = `${SCOPE}/cli-${target.os}-${target.cpu}`;
     const pkgDir = join(outDir, pkgName);
     mkdirSync(join(pkgDir, 'bin'), { recursive: true });
 
@@ -91,13 +106,34 @@ for (const target of TARGETS) {
                 description: `${DESCRIPTION} (${target.os} ${target.cpu} binary)`,
                 os: [target.os],
                 cpu: [target.cpu],
-                // Only the binary. No lifecycle scripts, nothing to execute at install.
-                files: ['bin'],
+                // The binary and the README. No lifecycle scripts, nothing to
+                // execute at install.
+                files: ['bin', 'README.md'],
                 preferUnplugged: true,
             },
             null,
             2
         ) + '\n'
+    );
+
+    writeFileSync(
+        join(pkgDir, 'README.md'),
+        [
+            `# ${pkgName}`,
+            '',
+            `The ${target.os} ${target.cpu} binary for the [ModelsLab CLI](https://www.npmjs.com/package/${NAME}).`,
+            '',
+            '**Do not install this package directly.** It is an optional dependency of',
+            `\`${NAME}\`, which selects the right one for your platform:`,
+            '',
+            '```bash',
+            `npm install -g ${NAME}`,
+            '```',
+            '',
+            `- Source: ${REPO}`,
+            '- Docs: https://docs.modelslab.com',
+            '',
+        ].join('\n')
     );
 
     platformPackages.push(pkgName);
