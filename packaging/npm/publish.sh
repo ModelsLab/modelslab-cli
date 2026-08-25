@@ -33,8 +33,12 @@ already_published() {
 publish_one() {
     local dir="$1"
     local name version attempt delay output
-    name=$(node -p "require('${dir}/package.json').name")
-    version=$(node -p "require('${dir}/package.json').version")
+    # jq, not `node -p require(...)`. Node treats a path that does not start with
+    # ./ or / as a MODULE specifier, so `require('dist/npm/@modelslab/cli-linux-x64/package.json')`
+    # is a module lookup that fails with MODULE_NOT_FOUND. It only worked in local
+    # testing because that passed absolute paths; CI passes a relative dist dir.
+    name=$(jq -r .name "${dir}/package.json")
+    version=$(jq -r .version "${dir}/package.json")
 
     if already_published "$name" "$version"; then
         echo "skip    ${name}@${version} (already on the registry)"

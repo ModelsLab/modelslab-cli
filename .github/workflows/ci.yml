@@ -88,6 +88,30 @@ jobs:
           # The real check: the shim resolves the binary and the binary runs.
           ./node_modules/.bin/modelslab --version
 
+      # Dry-runs publish.sh against a stubbed npm, from the repo root with a
+      # relative dist dir — the shape CI and the release both use. v0.1.3 died
+      # here on a `node -p require('dist/npm/...')` that resolves fine with an
+      # absolute path and not at all with a relative one, so local testing with
+      # absolute paths never saw it.
+      - name: Dry-run the npm publisher
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/stub
+          cat > /tmp/stub/npm <<'STUB'
+          #!/usr/bin/env bash
+          case "$1" in
+            view) exit 1 ;;
+            publish) echo "would publish $2"; exit 0 ;;
+            *) exit 0 ;;
+          esac
+          STUB
+          chmod +x /tmp/stub/npm
+          output=$(PATH="/tmp/stub:$PATH" bash packaging/npm/publish.sh dist/npm)
+          echo "$output"
+          # Seven packages, and the unscoped entry must come last.
+          test "$(grep -c '^publish ' <<<"$output")" -eq 7
+          test "$(grep '^publish ' <<<"$output" | tail -1)" = "publish modelslab-cli@0.0.0"
+
       - name: Build PyPI wheels
         run: python3 packaging/pypi/build.py v0.0.0 artifacts dist/pypi
 
