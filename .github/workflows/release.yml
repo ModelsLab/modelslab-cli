@@ -4,6 +4,16 @@ on:
   push:
     tags:
       - "v*"
+  # A release that fails halfway must be retryable without moving a published
+  # tag. v0.2.0 published its GitHub assets and then lost npm, PyPI and both
+  # taps to an expired credential, and there was no way to finish it: the only
+  # trigger was the tag push that had already happened.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re)publish, e.g. v0.2.0"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -12,11 +22,16 @@ permissions:
   # outright rather than degrading to an unsigned one.
   id-token: write
 
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - uses: actions/setup-go@v5
         with:
@@ -32,10 +47,60 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
+
+      # Probe the tap credentials BEFORE goreleaser runs.
+      #
+      # goreleaser treats a failed cask/scoop push as fatal, so a PAT that
+      # expires silently takes down npm, PyPI and every downstream step along
+      # with the two install channels it actually governs. Checking first turns
+      # that into a warning and a skipped tap. Reads .goreleaser.yml's
+      # SKIP_HOMEBREW / SKIP_SCOOP.
+      - name: Check tap credentials
+        id: taps
+        env:
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          SCOOP_BUCKET_GITHUB_TOKEN: ${{ secrets.SCOOP_BUCKET_GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+
+          probe() {
+            local name="$1" repo="$2" token="$3"
+
+            if [ -z "$token" ]; then
+              echo "::warning title=$name skipped::no token configured for $repo"
+              return 1
+            fi
+
+            local status
+            status="$(curl -sS -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $token" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$repo")"
+
+            if [ "$status" != "200" ]; then
+              echo "::warning title=$name skipped::token cannot read $repo (HTTP $status) — rotate the PAT and re-run this workflow with the same tag"
+              return 1
+            fi
+
+            return 0
+          }
+
+          if probe Homebrew ModelsLab/homebrew-tap "$HOMEBREW_TAP_GITHUB_TOKEN"; then
+            echo "SKIP_HOMEBREW=false" >> "$GITHUB_ENV"
+          else
+            echo "SKIP_HOMEBREW=true" >> "$GITHUB_ENV"
+          fi
+
+          if probe Scoop ModelsLab/scoop-bucket "$SCOOP_BUCKET_GITHUB_TOKEN"; then
+            echo "SKIP_SCOOP=false" >> "$GITHUB_ENV"
+          else
+            echo "SKIP_SCOOP=true" >> "$GITHUB_ENV"
+          fi
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
@@ -47,6 +112,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
           SCOOP_BUCKET_GITHUB_TOKEN: ${{ secrets.SCOOP_BUCKET_GITHUB_TOKEN }}
+          # SKIP_HOMEBREW and SKIP_SCOOP reach goreleaser through $GITHUB_ENV.
 
       # Both registries package the SAME binaries goreleaser just built, taken
       # from dist/ rather than rebuilt, so npm, PyPI, Homebrew and Scoop can
@@ -73,7 +139,7 @@ jobs:
           registry-url: "https://registry.npmjs.org"
 
       - name: Build npm packages
-        run: node packaging/npm/build.mjs "${GITHUB_REF_NAME}" artifacts dist/npm
+        run: node packaging/npm/build.mjs "${RELEASE_TAG}" artifacts dist/npm
 
       # `secrets` is not an available context in a step-level `if`, so the token
       # is mapped to env and the guard reads that. Without the guard, a fork or a
@@ -96,7 +162,7 @@ jobs:
 
       - name: Build PyPI wheels
         if: ${{ !cancelled() }}
-        run: python3 packaging/pypi/build.py "${GITHUB_REF_NAME}" artifacts dist/pypi
+        run: python3 packaging/pypi/build.py "${RELEASE_TAG}" artifacts dist/pypi
 
       # `if: always()` because npm and PyPI are independent registries and a
       # failure at one is not a reason to skip the other. v0.1.2 published five

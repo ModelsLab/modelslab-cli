@@ -37,6 +37,12 @@ archives:
 checksum:
   name_template: "checksums.txt"
 
+release:
+  # Re-running a release must be safe. The default `keep-existing` leaves a
+  # half-published release from a failed run in place, so the retry cannot
+  # correct it; `replace` makes the tag's assets match whatever this run built.
+  mode: replace
+
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
 
@@ -50,18 +56,30 @@ changelog:
       - "Merge pull request"
 
 homebrew_casks:
-  - repository:
+  # skip_upload is driven by the workflow's tap-credential probe.
+  #
+  # goreleaser treats a failed cask push as fatal, and the tap PATs expired
+  # seven months after they were minted. On v0.2.0 that 401 took the ENTIRE
+  # release with it: npm, PyPI and every step after goreleaser never ran, over
+  # a credential that only affects two optional install channels. A dead tap
+  # token now degrades the release instead of ending it.
+  #
+  # envOrDefault, not .Env: an unset secret must not fail config loading.
+  - skip_upload: '{{ envOrDefault "SKIP_HOMEBREW" "false" }}'
+    repository:
       owner: ModelsLab
       name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+      token: '{{ envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "unset" }}'
     homepage: https://modelslab.sh
     description: "ModelsLab CLI — AI generation and account management from the terminal"
 
 scoops:
-  - repository:
+  # See the note on homebrew_casks above.
+  - skip_upload: '{{ envOrDefault "SKIP_SCOOP" "false" }}'
+    repository:
       owner: ModelsLab
       name: scoop-bucket
-      token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
+      token: '{{ envOrDefault "SCOOP_BUCKET_GITHUB_TOKEN" "unset" }}'
     homepage: https://modelslab.sh
     description: "ModelsLab CLI — AI generation and account management from the terminal"
     license: MIT
