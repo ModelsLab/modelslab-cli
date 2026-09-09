@@ -38,10 +38,15 @@ checksum:
   name_template: "checksums.txt"
 
 release:
-  # Re-running a release must be safe. The default `keep-existing` leaves a
-  # half-published release from a failed run in place, so the retry cannot
-  # correct it; `replace` makes the tag's assets match whatever this run built.
+  # Re-running a release must be safe.
+  #
+  # `mode` governs the release NOTES only — it does nothing about artifacts, and
+  # the v0.2.0 retry died proving it: every upload came back
+  # `422 already_exists` against the assets the first, half-failed run had
+  # already attached. replace_existing_artifacts is the half that actually
+  # overwrites them.
   mode: replace
+  replace_existing_artifacts: true
 
 snapshot:
   version_template: "{{ incpatch .Version }}-next"
