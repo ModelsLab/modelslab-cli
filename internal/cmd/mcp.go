@@ -20,7 +20,7 @@ var mcpServeCmd = &cobra.Command{
 		transport, _ := cmd.Flags().GetString("transport")
 
 		client := getClient()
-		server := mcpserver.NewServer(client)
+		server := mcpserver.NewServer(client, flagProfile)
 
 		switch transport {
 		case "stdio":
@@ -39,7 +39,7 @@ var mcpToolsCmd = &cobra.Command{
 	Short: "List available MCP tools",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client := getClient()
-		server := mcpserver.NewServer(client)
+		server := mcpserver.NewServer(client, flagProfile)
 		tools := server.ListTools()
 
 		outputResult(tools, func() {

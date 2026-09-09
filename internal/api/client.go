@@ -8,25 +8,60 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
 
 // Exit codes matching the design document
 const (
-	ExitSuccess       = 0
-	ExitGeneralError  = 1
-	ExitUsageError    = 2
-	ExitAuthError     = 3
-	ExitRateLimited   = 4
-	ExitNotFound      = 5
-	ExitPaymentError  = 6
-	ExitGenTimeout    = 7
-	ExitNetworkError  = 10
+	ExitSuccess      = 0
+	ExitGeneralError = 1
+	ExitUsageError   = 2
+	ExitAuthError    = 3
+	ExitRateLimited  = 4
+	ExitNotFound     = 5
+	ExitPaymentError = 6
+	ExitGenTimeout   = 7
+	ExitNetworkError = 10
 )
+
+// maxRawErrorBody caps how much of an unrecognised error body is echoed back.
+const maxRawErrorBody = 300
+
+// htmlTitle pulls the <title> out of a proxy's error page.
+var htmlTitle = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+
+// maxRateLimitWait is the longest window the client will sleep through before it
+// gives the terminal back. Laravel's throttle routinely names 60s; blocking that
+// long without a word looks like a hang.
+const maxRateLimitWait = 30 * time.Second
+
+// rateLimitWait reads how long the server asked us to wait. Retry-After is the
+// standard header and the one Laravel's throttle middleware sends;
+// X-RateLimit-Reset is an absolute unix timestamp.
+func rateLimitWait(header http.Header) time.Duration {
+	if value := header.Get("Retry-After"); value != "" {
+		if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds > 0 {
+			return time.Duration(seconds) * time.Second
+		}
+	}
+
+	if value := header.Get("X-RateLimit-Reset"); value != "" {
+		if resetAt, err := strconv.ParseInt(value, 10, 64); err == nil {
+			if seconds := resetAt - time.Now().Unix(); seconds > 0 {
+				return time.Duration(seconds) * time.Second
+			}
+		}
+	}
+
+	return 0
+}
 
 type Client struct {
 	BaseURL    string
@@ -38,8 +73,34 @@ type Client struct {
 
 type APIError struct {
 	StatusCode int
+	Code       string
 	Message    string
-	ExitCode   int
+	// Details carries the control plane's per-field validation errors, keyed by
+	// field name. Dropping it left the CLI guessing which field the server
+	// actually rejected.
+	Details  map[string][]string
+	ExitCode int
+}
+
+// FieldErrors renders Details as "field: message" lines, sorted for stable output.
+func (e *APIError) FieldErrors() []string {
+	if len(e.Details) == 0 {
+		return nil
+	}
+
+	fields := make([]string, 0, len(e.Details))
+	for field := range e.Details {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+
+	lines := make([]string, 0, len(fields))
+	for _, field := range fields {
+		for _, message := range e.Details[field] {
+			lines = append(lines, field+": "+message)
+		}
+	}
+	return lines
 }
 
 func (e *APIError) Error() string {
@@ -171,20 +232,22 @@ func (c *Client) doRequest(method, path string, body interface{}, result interfa
 
 		// Handle rate limiting
 		if resp.StatusCode == 429 {
-			if attempt < maxRetries {
-				waitTime := math.Pow(2, float64(attempt))
-				if reset := resp.Header.Get("X-RateLimit-Reset"); reset != "" {
-					if resetTime, err := strconv.ParseInt(reset, 10, 64); err == nil {
-						waitSecs := resetTime - time.Now().Unix()
-						if waitSecs > 0 && waitSecs < 30 {
-							waitTime = float64(waitSecs)
-						}
-					}
+			retryAfter := rateLimitWait(resp.Header)
+			if attempt < maxRetries && retryAfter <= maxRateLimitWait {
+				waitTime := time.Duration(math.Pow(2, float64(attempt))) * time.Second
+				if retryAfter > 0 {
+					waitTime = retryAfter
 				}
-				time.Sleep(time.Duration(waitTime) * time.Second)
+				time.Sleep(waitTime)
 				continue
 			}
-			return &APIError{StatusCode: 429, Message: "Rate limited. Please try again later.", ExitCode: ExitRateLimited}
+			// Keep the server's own message and the window it named. The old
+			// blanket "try again later" sent people straight back into the wall.
+			apiErr := parseAPIError(429, respBody)
+			if retryAfter > 0 {
+				apiErr.Message = fmt.Sprintf("%s Retry in %s.", apiErr.Message, retryAfter)
+			}
+			return apiErr
 		}
 
 		// Handle server errors with retry
@@ -230,18 +293,106 @@ func parseAPIError(statusCode int, body []byte) *APIError {
 		exitCode = ExitRateLimited
 	}
 
-	// Try to extract message from JSON response
+	code, message, details := extractAPIErrorFields(body)
+	if message == "" {
+		message = summarizeRawBody(body, statusCode)
+	}
+
+	return &APIError{StatusCode: statusCode, Code: code, Message: message, Details: details, ExitCode: exitCode}
+}
+
+// extractAPIErrorFields pulls the machine code and the human message out of an
+// error body. The control plane wraps every failure as
+//
+//	{"data":null,"error":{"code":"invalid_credentials","message":"..."},"meta":{...}}
+//
+// so the message is NOT at the top level and "error" is an object, not a string.
+// Reading only the top level printed the whole JSON blob back at the user on
+// every failed login. The flatter shapes are still handled: some legacy
+// endpoints answer {"message":...} or {"error":"..."}.
+func extractAPIErrorFields(body []byte) (string, string, map[string][]string) {
 	var errResp map[string]interface{}
-	message := string(body)
-	if err := json.Unmarshal(body, &errResp); err == nil {
-		if msg, ok := errResp["message"].(string); ok {
-			message = msg
-		} else if msg, ok := errResp["error"].(string); ok {
-			message = msg
+	if err := json.Unmarshal(body, &errResp); err != nil {
+		return "", "", nil
+	}
+
+	if errObj, ok := errResp["error"].(map[string]interface{}); ok {
+		code, _ := errObj["code"].(string)
+		message, _ := errObj["message"].(string)
+		if message == "" {
+			message, _ = errResp["message"].(string)
+		}
+		return code, message, parseErrorDetails(errObj["details"])
+	}
+
+	if msg, ok := errResp["message"].(string); ok && msg != "" {
+		code, _ := errResp["code"].(string)
+		return code, msg, parseErrorDetails(errResp["errors"])
+	}
+
+	if msg, ok := errResp["error"].(string); ok && msg != "" {
+		code, _ := errResp["code"].(string)
+		return code, msg, parseErrorDetails(errResp["errors"])
+	}
+
+	return "", "", nil
+}
+
+// parseErrorDetails normalises Laravel's per-field error bag. It arrives as
+// {"field": ["message", ...]}, but an empty bag serialises as [] rather than {},
+// and some codes put a flat object there instead.
+func parseErrorDetails(raw interface{}) map[string][]string {
+	bag, ok := raw.(map[string]interface{})
+	if !ok || len(bag) == 0 {
+		return nil
+	}
+
+	details := make(map[string][]string, len(bag))
+	for field, value := range bag {
+		switch typed := value.(type) {
+		case string:
+			details[field] = []string{typed}
+		case []interface{}:
+			for _, item := range typed {
+				if message, ok := item.(string); ok {
+					details[field] = append(details[field], message)
+				}
+			}
 		}
 	}
 
-	return &APIError{StatusCode: statusCode, Message: message, ExitCode: exitCode}
+	if len(details) == 0 {
+		return nil
+	}
+	return details
+}
+
+// summarizeRawBody is the last resort when the body carries no message we
+// recognise. An unparseable body is often an HTML error page from a proxy, and
+// dumping the whole thing into the terminal helps nobody.
+func summarizeRawBody(body []byte, statusCode int) string {
+	raw := strings.TrimSpace(string(body))
+	if raw == "" {
+		return fmt.Sprintf("Request failed with HTTP %d.", statusCode)
+	}
+
+	// A proxy error page is HTML. Its <title> ("502 Bad Gateway") is the only
+	// part worth showing; the markup around it is noise in a terminal.
+	if match := htmlTitle.FindSubmatch(body); match != nil {
+		if title := strings.TrimSpace(string(match[1])); title != "" {
+			return fmt.Sprintf("%s (HTTP %d)", title, statusCode)
+		}
+	}
+
+	if len(raw) > maxRawErrorBody {
+		// Slice on a rune boundary; a body cut mid-rune renders as U+FFFD.
+		cut := maxRawErrorBody
+		for cut > 0 && !utf8.RuneStart(raw[cut]) {
+			cut--
+		}
+		return raw[:cut] + "…"
+	}
+	return raw
 }
 
 // GenerateIdempotencyKey creates a UUID for idempotent billing operations.

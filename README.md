@@ -183,6 +183,10 @@ modelslab auth login --browser
 # Email/password login also gets both token and API key
 modelslab auth login --email you@example.com --password "..."
 
+# NOTE: accounts created with "Continue with Google" or "Continue with GitHub"
+# have no password, so --email/--password can never work for them. Use
+# --browser, or set a password first with `modelslab auth forgot-password`.
+
 # Or set API key manually
 modelslab config set api_key "your-api-key"
 

