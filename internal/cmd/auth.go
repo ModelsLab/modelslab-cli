@@ -15,14 +15,12 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/ModelsLab/modelslab-cli/internal/api"
 	"github.com/ModelsLab/modelslab-cli/internal/auth"
 	"github.com/ModelsLab/modelslab-cli/internal/output"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 )
 
 var authCmd = &cobra.Command{
@@ -61,17 +59,18 @@ var authLoginCmd = &cobra.Command{
 		deviceName, _ := cmd.Flags().GetString("device-name")
 
 		if email == "" {
-			fmt.Print("Email: ")
-			fmt.Scanln(&email)
+			value, err := promptLine("Email: ")
+			if err != nil {
+				return err
+			}
+			email = value
 		}
 		if password == "" {
-			fmt.Print("Password: ")
-			bytePw, err := term.ReadPassword(int(syscall.Stdin))
+			value, err := promptSecret("Password: ")
 			if err != nil {
-				return fmt.Errorf("could not read password: %w", err)
+				return err
 			}
-			password = string(bytePw)
-			fmt.Println()
+			password = value
 		}
 
 		if expiry == "" {
@@ -94,7 +93,7 @@ var authLoginCmd = &cobra.Command{
 		if err != nil {
 			apiErr, ok := err.(*api.APIError)
 			if ok {
-				output.PrintError(apiErr.Message, "Check your email and password.", "Run: modelslab auth forgot-password")
+				output.PrintError(apiErr.Message, loginFailureHints(apiErr, email)...)
 				os.Exit(apiErr.ExitCode)
 			}
 			return err
@@ -110,7 +109,9 @@ var authLoginCmd = &cobra.Command{
 			}
 			// Also store API key if returned
 			if k, ok := data["api_key"].(string); ok && k != "" {
-				auth.StoreAPIKey(flagProfile, k)
+				if err := auth.StoreAPIKey(flagProfile, k); err != nil {
+					return fmt.Errorf("logged in, but could not store the API key: %w", err)
+				}
 			}
 		} else if t, ok := result["token"].(string); ok {
 			token = t
@@ -122,9 +123,17 @@ var authLoginCmd = &cobra.Command{
 			return fmt.Errorf("no token returned from login")
 		}
 
-		// Store credentials
-		auth.StoreToken(flagProfile, token)
-		auth.StoreEmail(flagProfile, email)
+		// Checked, not fire-and-forget. When both the keychain and the file
+		// fallback fail — a read-only ~/.config, a denied keychain prompt — the
+		// CLI used to print "Logged in" and exit 0 while storing nothing, and
+		// every later command 401'd for no visible reason.
+		if err := auth.StoreToken(flagProfile, token); err != nil {
+			return fmt.Errorf("logged in, but could not store the access token: %w", err)
+		}
+		if err := auth.StoreEmail(flagProfile, email); err != nil {
+			return fmt.Errorf("logged in, but could not store the account email: %w", err)
+		}
+		apiClient = nil
 
 		outputResult(result, func() {
 			output.PrintSuccess(fmt.Sprintf("Logged in as %s (profile: %s)", email, flagProfile))
@@ -132,6 +141,50 @@ var authLoginCmd = &cobra.Command{
 		})
 		return nil
 	},
+}
+
+// loginFailureHints turns a control-plane error code into next steps a user can
+// actually act on.
+//
+// The old blanket "check your email and password" was wrong for the two failures
+// people actually hit. An account created through Google or GitHub is stored with
+// a random password nobody ever sees, so email+password login can never succeed
+// for it and the only way in is `--browser`. And an unverified account fails with
+// credentials that are perfectly correct.
+func loginFailureHints(apiErr *api.APIError, email string) []string {
+	switch apiErr.Code {
+	case "email_not_verified":
+		hint := "Run: modelslab auth resend-verification"
+		if email != "" {
+			hint += " --email " + email
+		}
+		return []string{"This account exists but its email is not verified yet.", hint}
+	case "access_denied":
+		return []string{"Contact support@modelslab.com if you think this is a mistake."}
+	case "validation_error":
+		// Say which field the server rejected instead of guessing at --email.
+		if fields := apiErr.FieldErrors(); len(fields) > 0 {
+			return append([]string{"The server rejected these values:"}, fields...)
+		}
+		return []string{"The server rejected the login payload — check --email and --expiry."}
+	case "invalid_credentials":
+		return []string{
+			"Check your email and password.",
+			"Signed up with Google or GitHub? That account has no password — run: modelslab auth login --browser",
+			"Otherwise run: modelslab auth forgot-password",
+		}
+	case "":
+		// No code means we could not read the response at all — a proxy error
+		// page, a captive portal, an outage. Saying "check your password" here
+		// sends people to reset a password that was never the problem.
+		return []string{
+			fmt.Sprintf("The server did not return a recognisable error (HTTP %d).", apiErr.StatusCode),
+			"This is usually a network or service problem, not your credentials. Try again shortly.",
+			"Check https://modelslab.com/status, or pass --base-url if you are pointing at a non-default host.",
+		}
+	default:
+		return []string{"Run: modelslab auth login --browser", "Or run: modelslab auth forgot-password"}
+	}
 }
 
 func runBrowserLogin(cmd *cobra.Command) error {
@@ -199,13 +252,21 @@ func runBrowserLogin(cmd *cobra.Command) error {
 		return err
 	}
 
-	if noOpen {
-		fmt.Fprintf(os.Stderr, "Open this URL in Chrome to authorize ModelsLab CLI:\n%s\n\n", loginURL)
-	} else {
-		fmt.Fprintln(os.Stderr, "Opening Google Chrome for ModelsLab login...")
+	/*
+	 * The URL is printed unconditionally, before any attempt to open it.
+	 *
+	 * openBrowser uses exec.Start(), which returns nil the moment the child is
+	 * spawned — so `xdg-open` with no display, or a Chrome that dies on launch,
+	 * both looked like success. The user saw "Waiting for browser
+	 * authorization..." and then a timeout five minutes later, and was never
+	 * once shown the URL they could have pasted somewhere that works.
+	 */
+	fmt.Fprintf(os.Stderr, "Authorize ModelsLab CLI at:\n%s\n\n", loginURL)
+
+	if !noOpen {
+		fmt.Fprintln(os.Stderr, "Opening your browser...")
 		if err := openBrowser(loginURL); err != nil {
-			fmt.Fprintf(os.Stderr, "Could not open Chrome automatically: %v\n", err)
-			fmt.Fprintf(os.Stderr, "Open this URL manually:\n%s\n\n", loginURL)
+			fmt.Fprintf(os.Stderr, "Could not open a browser automatically (%v) — open the URL above yourself.\n", err)
 		}
 	}
 	fmt.Fprintln(os.Stderr, "Waiting for browser authorization...")
@@ -219,7 +280,13 @@ func runBrowserLogin(cmd *cobra.Command) error {
 	case err := <-serveErrCh:
 		return fmt.Errorf("OAuth callback server failed: %w", err)
 	case <-timer.C:
-		return fmt.Errorf("browser login timed out after %s", timeout)
+		return fmt.Errorf(
+			"browser login timed out after %s.\n"+
+				"  Open the URL above and finish the grant there. If the browser sent you to the model\n"+
+				"  catalogue instead of a grant page, sign in at https://modelslab.com/login first and retry.\n"+
+				"  Raise the wait with --timeout, or print the URL without opening a browser with --no-open",
+			timeout,
+		)
 	}
 
 	if callback.Error != "" {
@@ -402,21 +469,25 @@ var authSignupCmd = &cobra.Command{
 		name, _ := cmd.Flags().GetString("name")
 
 		if email == "" {
-			fmt.Print("Email: ")
-			fmt.Scanln(&email)
+			value, err := promptLine("Email: ")
+			if err != nil {
+				return err
+			}
+			email = value
 		}
 		if password == "" {
-			fmt.Print("Password: ")
-			bytePw, err := term.ReadPassword(int(syscall.Stdin))
+			value, err := promptSecret("Password: ")
 			if err != nil {
-				return fmt.Errorf("could not read password: %w", err)
+				return err
 			}
-			password = string(bytePw)
-			fmt.Println()
+			password = value
 		}
 		if name == "" {
-			fmt.Print("Name: ")
-			fmt.Scanln(&name)
+			value, err := promptLine("Name: ")
+			if err != nil {
+				return err
+			}
+			name = value
 		}
 
 		client := getClient()
@@ -523,8 +594,11 @@ var authForgotPasswordCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		email, _ := cmd.Flags().GetString("email")
 		if email == "" {
-			fmt.Print("Email: ")
-			fmt.Scanln(&email)
+			value, err := promptLine("Email: ")
+			if err != nil {
+				return err
+			}
+			email = value
 		}
 
 		client := getClient()
@@ -578,8 +652,11 @@ var authResendVerificationCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		email, _ := cmd.Flags().GetString("email")
 		if email == "" {
-			fmt.Print("Email: ")
-			fmt.Scanln(&email)
+			value, err := promptLine("Email: ")
+			if err != nil {
+				return err
+			}
+			email = value
 		}
 
 		client := getClient()

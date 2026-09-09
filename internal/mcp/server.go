@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/ModelsLab/modelslab-cli/internal/api"
+	"github.com/ModelsLab/modelslab-cli/internal/auth"
 	mcpgo "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -18,13 +19,54 @@ type ToolInfo struct {
 
 type Server struct {
 	client    *api.Client
+	profile   string
 	mcpServer *server.MCPServer
 }
 
-func NewServer(client *api.Client) *Server {
-	s := &Server{client: client}
+func NewServer(client *api.Client, profile string) *Server {
+	s := &Server{client: client, profile: profile}
 	s.init()
 	return s
+}
+
+/*
+ * applyCredentials pushes an access token or API key from a tool response onto
+ * the live client, and persists it for the next process.
+ *
+ * Storage failures are deliberately not fatal: the in-memory client is already
+ * updated, so the session works either way, and an MCP tool call is the wrong
+ * place to abort over a locked keychain.
+ */
+func (s *Server) applyCredentials(result map[string]interface{}) {
+	data, ok := result["data"].(map[string]interface{})
+	if !ok {
+		return
+	}
+
+	token, _ := data["access_token"].(string)
+	if token == "" {
+		token, _ = data["token"].(string)
+	}
+	if token != "" {
+		s.client.Token = token
+		if s.profile != "" {
+			_ = auth.StoreToken(s.profile, token)
+		}
+	}
+
+	if key, _ := data["api_key"].(string); key != "" {
+		s.client.APIKey = key
+		if s.profile != "" {
+			_ = auth.StoreAPIKey(s.profile, key)
+		}
+	}
+
+	if key, _ := data["key"].(string); key != "" {
+		s.client.APIKey = key
+		if s.profile != "" {
+			_ = auth.StoreAPIKey(s.profile, key)
+		}
+	}
 }
 
 func (s *Server) init() {
@@ -52,8 +94,20 @@ func (s *Server) registerControlPlaneTools() {
 		"required": []string{"email", "password"},
 	}, func(args map[string]interface{}) (interface{}, error) {
 		var result map[string]interface{}
-		err := s.client.DoControlPlane("POST", "/auth/login", args, &result)
-		return result, err
+		if err := s.client.DoControlPlane("POST", "/auth/login", args, &result); err != nil {
+			return nil, err
+		}
+		/*
+		 * Apply the credentials, do not just hand them back.
+		 *
+		 * The client is built once in `mcp serve` and lives for the whole
+		 * process. Returning the token without assigning it meant an agent that
+		 * started the server unauthenticated, called auth-login, and got a token
+		 * in the response then got 401 from every other tool for the life of the
+		 * process — with a valid token sitting in its own transcript.
+		 */
+		s.applyCredentials(result)
+		return result, nil
 	})
 
 	s.addTool("auth-signup", "Create a new ModelsLab account", map[string]interface{}{
@@ -106,8 +160,11 @@ func (s *Server) registerControlPlaneTools() {
 		},
 	}, func(args map[string]interface{}) (interface{}, error) {
 		var result map[string]interface{}
-		err := s.client.DoControlPlane("POST", "/api-keys", args, &result)
-		return result, err
+		if err := s.client.DoControlPlane("POST", "/api-keys", args, &result); err != nil {
+			return nil, err
+		}
+		s.applyCredentials(result)
+		return result, nil
 	})
 
 	// Models tools

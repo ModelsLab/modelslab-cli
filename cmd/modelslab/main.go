@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/ModelsLab/modelslab-cli/internal/cmd"
@@ -17,7 +16,6 @@ var (
 func main() {
 	cmd.SetVersion(version, commit, date)
 	if err := cmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		os.Exit(cmd.ReportError(err))
 	}
 }

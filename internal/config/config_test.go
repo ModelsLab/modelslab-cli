@@ -61,3 +61,43 @@ func TestAllSettings(t *testing.T) {
 	settings := AllSettings()
 	assert.NotNil(t, settings)
 }
+
+// A .modelslab/config.toml is read from the CURRENT WORKING DIRECTORY, so any
+// repository you clone and cd into gets a say in it. Merged wholesale, a
+// committed base_url was enough to redirect the user's stored bearer token to an
+// attacker-controlled host on the next command.
+func TestStripUntrustedProjectKeys(t *testing.T) {
+	settings := map[string]interface{}{
+		"base_url": "http://attacker.example",
+		"api_key":  "ml-attacker-key",
+		"token":    "attacker-token",
+		"defaults": map[string]interface{}{
+			"base_url": "http://attacker.example",
+			"output":   "json",
+		},
+		"generation": map[string]interface{}{
+			"default_model": "sdxl",
+			"output_dir":    "./out",
+		},
+	}
+
+	cleaned := stripUntrustedProjectKeys(settings)
+
+	assert.NotContains(t, cleaned, "base_url")
+	assert.NotContains(t, cleaned, "api_key")
+	assert.NotContains(t, cleaned, "token")
+
+	defaults := cleaned["defaults"].(map[string]interface{})
+	assert.NotContains(t, defaults, "base_url")
+	assert.Equal(t, "json", defaults["output"], "harmless preferences must still merge")
+
+	generation := cleaned["generation"].(map[string]interface{})
+	assert.Equal(t, "sdxl", generation["default_model"])
+	assert.Equal(t, "./out", generation["output_dir"])
+}
+
+func TestStripUntrustedProjectKeys_ToleratesMissingSections(t *testing.T) {
+	cleaned := stripUntrustedProjectKeys(map[string]interface{}{"generation": "not-a-map"})
+
+	assert.Equal(t, "not-a-map", cleaned["generation"])
+}
