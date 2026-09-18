@@ -42,6 +42,8 @@ type Info struct {
 	AssetName       string    `json:"asset_name,omitempty"`
 	AssetURL        string    `json:"asset_url,omitempty"`
 	PublishedAt     time.Time `json:"published_at"`
+	InstallMethod   string    `json:"install_method,omitempty"`
+	UpdateCommand   string    `json:"update_command,omitempty"`
 }
 
 type CheckOptions struct {
@@ -172,21 +174,37 @@ func Install(ctx context.Context, opts InstallOptions) (*InstallResult, error) {
 }
 
 func CachedCheck(ctx context.Context, opts CheckOptions, cachePath string, interval time.Duration) (*Info, error) {
-	if cache, err := ReadCache(cachePath); err == nil {
-		if cache.CurrentVersion == opts.CurrentVersion && time.Since(cache.CheckedAt) < interval {
-			return &Info{
-				CurrentVersion:  cache.CurrentVersion,
-				LatestVersion:   cache.LatestVersion,
-				UpdateAvailable: cache.UpdateAvailable,
-				CanCompare:      cache.CanCompare,
-				ReleaseURL:      cache.ReleaseURL,
-				PublishedAt:     cache.PublishedAt,
-			}, nil
-		}
+	cache, cacheErr := ReadCache(cachePath)
+	if cacheErr == nil && cache.CurrentVersion != opts.CurrentVersion {
+		cache, cacheErr = nil, errors.New("cache is for another version")
+	}
+	if cacheErr == nil && time.Since(cache.CheckedAt) < interval {
+		return &Info{
+			CurrentVersion:  cache.CurrentVersion,
+			LatestVersion:   cache.LatestVersion,
+			UpdateAvailable: cache.UpdateAvailable,
+			CanCompare:      cache.CanCompare,
+			ReleaseURL:      cache.ReleaseURL,
+			PublishedAt:     cache.PublishedAt,
+		}, nil
 	}
 
 	info, err := Check(ctx, opts)
 	if err != nil {
+		/*
+		 * A failed check is cached too. It used to return without writing, so
+		 * offline, behind a proxy that blocks api.github.com, or after GitHub's
+		 * anonymous rate limit, EVERY command re-ran the check and waited out its
+		 * timeout first. Keep what the last good check learned and try again
+		 * after the interval.
+		 */
+		failed := Cache{CheckedAt: time.Now(), CurrentVersion: opts.CurrentVersion}
+		if cacheErr == nil {
+			failed = *cache
+			failed.CheckedAt = time.Now()
+		}
+		_ = WriteCache(cachePath, failed)
+
 		return nil, err
 	}
 
@@ -544,18 +562,27 @@ func replaceExecutable(targetPath, newBinaryPath string) error {
 
 	replacement := targetPath + ".new"
 	if err := copyFile(newBinaryPath, replacement, mode); err != nil {
-		return err
+		return permissionHint(targetPath, err)
 	}
 
-	if runtime.GOOS == "windows" {
-		return fmt.Errorf("downloaded update to %s, but Windows cannot replace a running executable automatically", replacement)
-	}
-
+	/*
+	 * The same rename dance works on Windows, which this used to refuse outright.
+	 *
+	 * Windows will not delete or overwrite a running .exe, but it will rename
+	 * one: the loaded image stays mapped under the new name. So the running
+	 * binary moves aside to .old, the new one takes its name, and only the final
+	 * Remove of .old fails — that file is cleaned up by RemoveStaleBackups on the
+	 * next run, once nothing has it open.
+	 */
 	backup := targetPath + ".old"
-	_ = os.Remove(backup)
+	if err := os.Remove(backup); err != nil && !errors.Is(err, os.ErrNotExist) {
+		// Still held open by a CLI process that is running the previous
+		// version. Step around it rather than fail the update.
+		backup = fmt.Sprintf("%s.old.%d", targetPath, time.Now().UnixNano())
+	}
 	if err := os.Rename(targetPath, backup); err != nil {
 		_ = os.Remove(replacement)
-		return fmt.Errorf("could not prepare executable replacement: %w", err)
+		return permissionHint(targetPath, fmt.Errorf("could not prepare executable replacement: %w", err))
 	}
 	if err := os.Rename(replacement, targetPath); err != nil {
 		_ = os.Rename(backup, targetPath)
@@ -565,6 +592,39 @@ func replaceExecutable(targetPath, newBinaryPath string) error {
 	_ = os.Remove(backup)
 
 	return nil
+}
+
+// permissionHint says how to get past a directory the user cannot write to, such
+// as /usr/local/bin or Program Files, instead of a bare "permission denied".
+func permissionHint(targetPath string, err error) error {
+	if !errors.Is(err, os.ErrPermission) {
+		return err
+	}
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("%w\n  You cannot write to %s. Run the update from a terminal opened as Administrator", err, filepath.Dir(targetPath))
+	}
+
+	return fmt.Errorf("%w\n  You cannot write to %s. Run: sudo modelslab update", err, filepath.Dir(targetPath))
+}
+
+// RemoveStaleBackups deletes the .old binaries a Windows update leaves behind.
+// See replaceExecutable. It is best effort: a backup that another running CLI
+// still holds open stays until a later run.
+func RemoveStaleBackups() {
+	exe, err := os.Executable()
+	if err != nil {
+		return
+	}
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+
+	for _, pattern := range []string{exe + ".old", exe + ".old.*"} {
+		matches, _ := filepath.Glob(pattern)
+		for _, match := range matches {
+			_ = os.Remove(match)
+		}
+	}
 }
 
 func copyFile(src, dst string, mode os.FileMode) error {

@@ -26,11 +26,16 @@ var updateCmd = &cobra.Command{
 	Long: `Check GitHub Releases for a newer ModelsLab CLI version and install it.
 
 The updater downloads the release archive for your platform, verifies it against
-the release checksums.txt file, and replaces the current executable.`,
+the release checksums.txt file, and replaces the current executable.
+
+If pip, pipx, uv, npm, Homebrew or Scoop installed the CLI, that package manager
+owns the file. The updater does not replace it and shows the command to run.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if updateTimeout <= 0 {
 			updateTimeout = 2 * time.Minute
 		}
+
+		method := updater.CurrentInstallMethod()
 
 		ctx, cancel := context.WithTimeout(cmd.Context(), updateTimeout)
 		defer cancel()
@@ -48,11 +53,21 @@ the release checksums.txt file, and replaces the current executable.`,
 			SkipChecksum: updateSkipChecksum,
 		}
 
-		if updateCheckOnly {
+		if updateCheckOnly || method.Managed() {
 			info, err := updater.Check(ctx, options.CheckOptions)
 			if err != nil {
 				return err
 			}
+			info.InstallMethod = method.Name
+			info.UpdateCommand = method.UpdateCommand
+
+			if !updateCheckOnly && (info.UpdateAvailable || updateForce) {
+				return fmt.Errorf(
+					"%s installed this copy of the ModelsLab CLI, so %s must update it.\n  Run: %s",
+					method.Name, method.Name, method.UpdateCommand,
+				)
+			}
+
 			outputResult(info, func() {
 				printUpdateCheck(info)
 			})
@@ -83,7 +98,7 @@ func printUpdateCheck(info *updater.Info) {
 
 	if info.UpdateAvailable {
 		fmt.Printf("Update available: %s -> %s\n", formatVersion(info.CurrentVersion), formatVersion(info.LatestVersion))
-		fmt.Println("Run `modelslab update` to install it.")
+		fmt.Printf("Run: %s\n", info.UpdateCommand)
 		return
 	}
 
