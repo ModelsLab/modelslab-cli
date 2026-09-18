@@ -69,12 +69,21 @@ homebrew_casks:
   # a credential that only affects two optional install channels. A dead tap
   # token now degrades the release instead of ending it.
   #
-  # envOrDefault, not .Env: an unset secret must not fail config loading.
+  # skip_upload uses envOrDefault so an unset variable reads as "false".
+  #
+  # token must NOT. goreleaser renders a repository token through
+  # ApplySingleEnvOnly, which accepts exactly `{{ .Env.NAME }}` and has no
+  # template functions at all, so envOrDefault there fails with
+  # 'function "envOrDefault" not defined'. That went unnoticed until the first
+  # run with a working PAT: while the taps were skipped, the token was never
+  # rendered. The token is only rendered when the tap is published, and the
+  # workflow always sets the variable (empty when the secret is missing, in
+  # which case the probe has already set skip_upload).
   - skip_upload: '{{ envOrDefault "SKIP_HOMEBREW" "false" }}'
     repository:
       owner: ModelsLab
       name: homebrew-tap
-      token: '{{ envOrDefault "HOMEBREW_TAP_GITHUB_TOKEN" "unset" }}'
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://modelslab.sh
     description: "ModelsLab CLI — AI generation and account management from the terminal"
 
@@ -84,7 +93,7 @@ scoops:
     repository:
       owner: ModelsLab
       name: scoop-bucket
-      token: '{{ envOrDefault "SCOOP_BUCKET_GITHUB_TOKEN" "unset" }}'
+      token: "{{ .Env.SCOOP_BUCKET_GITHUB_TOKEN }}"
     homepage: https://modelslab.sh
     description: "ModelsLab CLI — AI generation and account management from the terminal"
     license: MIT
