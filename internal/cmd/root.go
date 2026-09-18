@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/ModelsLab/modelslab-cli/internal/output"
 	"github.com/ModelsLab/modelslab-cli/internal/updater"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var (
@@ -80,6 +82,9 @@ Designed for both humans and AI agents.`,
 			flagNoColor = true
 		}
 
+		if runtime.GOOS == "windows" {
+			updater.RemoveStaleBackups()
+		}
 		maybeNotifyUpdate(cmd)
 
 		return nil
@@ -181,7 +186,8 @@ func maybeNotifyUpdate(cmd *cobra.Command) {
 		return
 	}
 
-	fmt.Fprintf(os.Stderr, "Update available: ModelsLab CLI %s (current %s). Run `modelslab update`.\n\n", formatVersion(info.LatestVersion), formatVersion(info.CurrentVersion))
+	fmt.Fprintf(os.Stderr, "Update available: ModelsLab CLI %s (current %s). Run: %s\n\n",
+		formatVersion(info.LatestVersion), formatVersion(info.CurrentVersion), updater.CurrentInstallMethod().UpdateCommand)
 }
 
 func shouldSkipUpdateNotification(cmd *cobra.Command) bool {
@@ -192,6 +198,11 @@ func shouldSkipUpdateNotification(cmd *cobra.Command) bool {
 		return true
 	}
 	if flagOutput == string(output.FormatJSON) || flagJQ != "" {
+		return true
+	}
+	// Nobody reads a notice in CI, and a script that captures stderr should not
+	// find one in its logs.
+	if os.Getenv("CI") != "" || !term.IsTerminal(int(os.Stderr.Fd())) {
 		return true
 	}
 	if !updater.IsComparableVersion(cliVersion) {

@@ -47,14 +47,34 @@ type browserLoginCallback struct {
 var authLoginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Login to ModelsLab",
+	Long: `Login to ModelsLab.
+
+In an interactive terminal this opens your browser, asks you to grant the CLI
+access, and stores both the access token and the API key. This works for every
+account, including accounts created with "Continue with Google" or GitHub.
+
+The CLI uses email and password instead when you pass --email or --password,
+when you pass --browser=false, when stdin is not a terminal, or when no local
+browser is available (an SSH session, or Linux with no display).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		email, _ := cmd.Flags().GetString("email")
+		password, _ := cmd.Flags().GetString("password")
+
 		useBrowser, _ := cmd.Flags().GetBool("browser")
+		if !cmd.Flags().Changed("browser") {
+			interactive := stdinIsTerminal()
+			useBrowser = defaultToBrowserLogin(email, password, interactive, runtime.GOOS, os.Getenv)
+
+			if !useBrowser && interactive && email == "" && password == "" {
+				fmt.Fprintln(os.Stderr, "No local browser found (SSH session or no display), so the CLI uses email and password.")
+				fmt.Fprintln(os.Stderr, "Google or GitHub account? It has no password. Set one first with: modelslab auth forgot-password")
+				fmt.Fprintln(os.Stderr)
+			}
+		}
 		if useBrowser {
 			return runBrowserLogin(cmd)
 		}
 
-		email, _ := cmd.Flags().GetString("email")
-		password, _ := cmd.Flags().GetString("password")
 		expiry, _ := cmd.Flags().GetString("expiry")
 		deviceName, _ := cmd.Flags().GetString("device-name")
 
@@ -67,6 +87,9 @@ var authLoginCmd = &cobra.Command{
 		}
 		if password == "" {
 			value, err := promptSecret("Password: ")
+			if errors.Is(err, errNoInput) {
+				return errNoPasswordEntered
+			}
 			if err != nil {
 				return err
 			}
@@ -141,6 +164,57 @@ var authLoginCmd = &cobra.Command{
 		})
 		return nil
 	},
+}
+
+// errNoPasswordEntered replaces the bare "password: no input provided".
+//
+// An empty answer at the password prompt is almost never a typo. It is someone
+// whose account came from "Continue with Google" or GitHub, looking at a prompt
+// for a password that does not exist.
+var errNoPasswordEntered = errors.New("no password entered.\n" +
+	"  Signed up with Google or GitHub? That account has no password — run: modelslab auth login --browser\n" +
+	"  Or set a password first: modelslab auth forgot-password")
+
+// defaultToBrowserLogin decides how `auth login` signs in when --browser is not
+// given.
+//
+// Email and password used to be the default, and it is a dead end for every
+// account created with "Continue with Google" or GitHub: the account has no
+// password, so the prompt had nothing the user could type and the login died with
+// "password: no input provided". The npm and PyPI READMEs send new users straight
+// to a bare `modelslab auth login`, so that was the first thing they saw.
+//
+// Email and password is still the choice when the caller supplied either one,
+// when stdin is not a terminal (a script piping credentials must not start
+// waiting on a browser), and when there is no browser here to finish the grant.
+func defaultToBrowserLogin(email, password string, interactive bool, goos string, getenv func(string) string) bool {
+	if email != "" || password != "" || !interactive {
+		return false
+	}
+
+	return hasLocalBrowser(goos, getenv)
+}
+
+// hasLocalBrowser reports whether a browser on this machine can finish the OAuth
+// grant.
+//
+// "On this machine" matters more than "a browser exists": the callback server
+// listens on 127.0.0.1, so a browser on the far side of an SSH session opens the
+// grant page and then cannot deliver the result, and the login hangs until it
+// times out.
+func hasLocalBrowser(goos string, getenv func(string) string) bool {
+	for _, key := range []string{"SSH_CONNECTION", "SSH_CLIENT", "SSH_TTY"} {
+		if getenv(key) != "" {
+			return false
+		}
+	}
+
+	switch goos {
+	case "darwin", "windows":
+		return true
+	default:
+		return getenv("DISPLAY") != "" || getenv("WAYLAND_DISPLAY") != ""
+	}
 }
 
 // loginFailureHints turns a control-plane error code into next steps a user can
@@ -270,6 +344,7 @@ func runBrowserLogin(cmd *cobra.Command) error {
 		}
 	}
 	fmt.Fprintln(os.Stderr, "Waiting for browser authorization...")
+	fmt.Fprintln(os.Stderr, "(To use email and password instead, press Ctrl+C and run: modelslab auth login --email you@example.com)")
 
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
@@ -794,7 +869,7 @@ func init() {
 	// auth login
 	authLoginCmd.Flags().String("email", "", "Account email")
 	authLoginCmd.Flags().String("password", "", "Account password")
-	authLoginCmd.Flags().Bool("browser", false, "Log in with browser OAuth instead of email and password")
+	authLoginCmd.Flags().Bool("browser", false, "Log in through the browser (the default in an interactive terminal); --browser=false forces email and password")
 	authLoginCmd.Flags().Int("callback-port", 0, "Local callback port for browser OAuth (0 chooses a free port)")
 	authLoginCmd.Flags().String("expiry", "1_month", "Token expiry: 1_week, 1_month, 3_months, 6_months, 1_year, never")
 	authLoginCmd.Flags().String("device-name", "", "Device name for token")

@@ -50,7 +50,7 @@ func promptLine(label string) (string, error) {
 // which lands in shell history, ps output and CI logs. Fall back to reading the
 // line instead; there is no echo to suppress when nobody is typing.
 func promptSecret(label string) (string, error) {
-	if !term.IsTerminal(int(syscall.Stdin)) {
+	if !stdinIsTerminal() {
 		return promptLine(label)
 	}
 
@@ -67,6 +67,12 @@ func promptSecret(label string) (string, error) {
 	}
 
 	return secret, nil
+}
+
+// stdinIsTerminal reports whether a person could be typing at stdin, as opposed to
+// a pipe, a heredoc or CI.
+func stdinIsTerminal() bool {
+	return term.IsTerminal(int(syscall.Stdin))
 }
 
 // fieldName turns a prompt label ("Email: ") into something an error can read
