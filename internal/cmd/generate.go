@@ -15,8 +15,8 @@ import (
 )
 
 var generateCmd = &cobra.Command{
-	Use:   "generate",
-	Short: "Generate AI content (image, video, audio, 3D, chat)",
+	Use:     "generate",
+	Short:   "Generate AI content (image, video, audio, 3D, chat)",
 	Aliases: []string{"gen"},
 }
 
@@ -52,6 +52,16 @@ func pollAndDownload(cmd *cobra.Command, genType, fetchEndpoint string, result m
 	// If output is already available
 	if status == "success" || hasOutputURLs(result) {
 		return handleCompleted(result, download, outputDir, genType)
+	}
+
+	// The API reports a failed generation as HTTP 200 with status "error" and no
+	// job id, so the client sees no error. Polling then asked fetch/ for an
+	// empty id until the timeout, and --no-wait printed "Job queued" for it.
+	if status == "error" || status == "failed" {
+		return generationFailed(result)
+	}
+	if requestID == "" {
+		return fmt.Errorf("the API returned no job id to poll: %s", responseSummary(result))
 	}
 
 	if noWait {
@@ -96,11 +106,7 @@ func pollAndDownload(cmd *cobra.Command, genType, fetchEndpoint string, result m
 		case "success":
 			return handleCompleted(fetchResult, download, outputDir, genType)
 		case "error", "failed":
-			msg := "Generation failed"
-			if m, ok := fetchResult["message"].(string); ok {
-				msg = m
-			}
-			return fmt.Errorf("%s", msg)
+			return generationFailed(fetchResult)
 		case "processing":
 			elapsed := time.Since(startTime).Round(time.Second)
 			eta := ""
@@ -112,6 +118,34 @@ func pollAndDownload(cmd *cobra.Command, genType, fetchEndpoint string, result m
 
 		pollInterval = minDuration(pollInterval*2, maxInterval)
 	}
+}
+
+// generationFailed turns an API "error"/"failed" body into an error that carries
+// its message, which may be a string or, for validation errors, an object.
+func generationFailed(result map[string]interface{}) error {
+	switch m := result["message"].(type) {
+	case string:
+		if m != "" {
+			return fmt.Errorf("%s", m)
+		}
+	case nil:
+	default:
+		if encoded, err := json.Marshal(m); err == nil {
+			return fmt.Errorf("%s", encoded)
+		}
+	}
+
+	return fmt.Errorf("Generation failed")
+}
+
+// responseSummary is the raw body, for errors about a response the CLI could not use.
+func responseSummary(result map[string]interface{}) string {
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Sprintf("%v", result)
+	}
+
+	return string(encoded)
 }
 
 func hasOutputURLs(result map[string]interface{}) bool {
